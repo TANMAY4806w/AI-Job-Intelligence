@@ -191,7 +191,7 @@ The Normalization Engine accepts raw payloads and standardizes them into the can
 
 ### 4.5 Deduplication Engine
 Implements the 4-stage evidence hierarchy defined in [`DEDUPLICATION_V1.md`](../../rules/DEDUPLICATION_V1.md):
-- **Stage 1 (Exact Platform ID):** Matches identical `source` and `source_job_id` (Confidence: 1.0).
+- **Stage 1 (Exact Platform ID):** Matches identical `source` and `source_job_id` (Confidence: 1.0). Uses native platform IDs for structured ATS endpoints and deterministic `"gen_<hash>"` identifiers for generic career pages lacking native IDs.
 - **Stage 2 (Canonical ATS Endpoint):** Matches identical direct application links (Confidence: 0.98).
 - **Stage 3 (Composite Deterministic Match):** Evaluates `normalized_company_name` + `normalized_title` + `normalized_location` + posting date proximity $\le 14$ days (Confidence: 0.90).
 - **Stage 4 (Fuzzy Overlap & Dispute Resolution):** Triggers `review_reason = DUPLICATE_AMBIGUOUS` for ambiguous matches.
@@ -206,7 +206,7 @@ Executes the eight independent verification dimensions specified in [`VERIFICATI
 5. **Location Consistency:** Confirms P1/P2 cities or explicit remote eligibility in JD body (`location_verified`).
 6. **Experience Consistency:** Verifies experience expressions match 0–2 year criteria (`experience_verified`).
 7. **Salary Statedness:** Determines if salary is disclosed vs. null (`salary_verified`).
-8. **Posting Date Plausibility:** Validates publication timestamp within $T_{collected} \ge T_{posted} \ge (T_{collected} - 90\text{ days})$.
+8. **Posting Date Plausibility:** Validates publication timestamp within $T_{collected} \ge T_{posted} \ge (T_{collected} - 90\text{ days})$. If `posted_at` is missing or invalid, per the frozen verification rule the system falls back provisionally to `collected_at` for relative plausibility evaluation and flags `review_reason = POSTED_DATE_SUSPICIOUS`. In the canonical schema, `posted_at` remains NULL and the job must remain in `REVIEW` with `POSTED_DATE_SUSPICIOUS` until publication-date validity is established; `collected_at` alone serves only as ingestion metadata and provisional verification fallback, and never establishes active-feed eligibility or freshness. Late-discovered jobs with verified publication dates older than 5 days remain `EXPIRED` (`rejection_reason = JOB_TOO_OLD`).
 - **Confidence Computation:** Generates weighted composite score ($0.0 \le C \le 1.0$). If $C < 0.60$, record is routed to dedicated review.
 
 ### 4.7 Rule Engine & Deterministic Filtering
@@ -219,8 +219,8 @@ Implements the frozen business rules from [`JOB_FILTERS_V1.md`](../../rules/JOB_
   - `1–3 years`, ambiguous/unstated minimum $\rightarrow$ **`REVIEW` (`EXPERIENCE_AMBIGUOUS`)**
   - Stated range starts at $\ge 2$ years (`2–3`, `2–4`, `2–5`, `3+`, `Senior`, `Lead`, `Architect`) $\rightarrow$ **`EXCLUDE` (`REJECTED`, `EXPERIENCE_TOO_HIGH`)**
 - **Location & Remote Policy:** P1/P2 accepted. Remote roles with head office outside P1/P2 are **not** rejected; routed to `REVIEW` (`LOCATION_REMOTE_REVIEW`) pending explicit remote policy finalization.
-- **Regional Salary Minimums:** Pune ($\ge$ ₹30,000/mo or ₹3.6 LPA), Bengaluru ($\ge$ ₹5.0 LPA), Hyderabad ($\ge$ ₹5.0 LPA). Below minimum $\rightarrow$ `SALARY_BELOW_MINIMUM`. Unknown salary $\rightarrow$ preserved in `KEEP/REVIEW` with `salary_verified = false` and `review_reason = SALARY_UNKNOWN`.
-- **Freshness Window:** 0–24h (Highest), 1–3d (High), 3–5d (Normal), >5d (`JOB_TOO_OLD`, excluded from active feed, preserved in historical database).
+- **Regional Salary Minimums:** Mumbai / Navi Mumbai / Thane (no strict minimum required), Pune ($\ge$ ₹30,000/month or ₹3.6 LPA minimum), Bengaluru ($\ge$ ₹5.0 LPA minimum), Hyderabad ($\ge$ ₹5.0 LPA minimum). Disclosed compensation below regional minimum $\rightarrow$ `REJECTED` (`SALARY_BELOW_MINIMUM`). Unknown salary $\rightarrow$ **never** automatically rejected; preserved in `KEEP`/`REVIEW` with `salary_verified = false` and `review_reason = SALARY_UNKNOWN`.
+- **Freshness Window:** Strictly governed by original publication date (`posted_at`), **never** `collected_at`: 0–24h (Highest), 1–3d (High), 3–5d (Normal), >5d (`JOB_TOO_OLD`, excluded from active feed, preserved in historical database). Late-discovered postings whose `posted_at` is older than 5 days are preserved historically and routed directly to `EXPIRED` (`JOB_TOO_OLD`) rather than active; `collected_at` serves solely as ingestion metadata.
 - **Skills Advisory:** Skills are advisory ranking dimensions; missing skills **never** cause rejection.
 
 ---
@@ -311,24 +311,25 @@ The persistence layer uses a single **PostgreSQL** database. It combines relatio
 │ name            ├───────┤ company_id (FK)      ├───────┤ source_name          │
 │ normalized_name │       │ source_id (FK)       │       │ base_url             │
 │ domain          │       │ ats_type (Enum)      │       │ is_active            │
-│ sector (Enum)   │       │ ats_identifier       │       └──────────────────────┘
+│ sector (Enum)   │       │ ats_identifier (NULL)│       └──────────────────────┘
 │ business_model  │       │ career_url           │
-│ is_verified     │       └──────────────────────┘
-└────────┬────────┘
-         │ 1
-         │
-         │ *
-┌────────┴────────┐1     *┌──────────────────────┐       ┌──────────────────────┐
-│      jobs       ├───────┤ job_source_references│*     1│       raw_jobs       │
+│ is_verified     │       │ api_endpoint         │
+│ confidence      │       └──────────┬───────────┘
+└────────┬────────┘                  │ 1 (Provenance)
+         │ 1                         │
+         │ *                         │ *
+┌────────┴────────┐1     *┌──────────┴───────────┐*     1┌──────────────────────┐
+│      jobs       ├───────┤ job_source_references├───────┤       raw_jobs       │
 ├─────────────────┤       ├──────────────────────┤       ├──────────────────────┤
 │ id (PK)         │       │ id (PK)              │       │ id (PK)              │
-│ company_id (FK) │       │ job_id (FK)          ├───────┤ raw_payload (JSONB)  │
-│ title           │       │ raw_job_id (FK)      │       │ source_name          │
-│ location        │       │ source_url           │       │ collected_at         │
-│ eligibility_stat│       │ application_url      │       └──────────────────────┘
-│ role_priority   │       │ source_job_id        │
-│ confidence      │       │ source_data (JSONB)  │
-└────────┬────────┘       └──────────────────────┘
+│ company_id (FK) │       │ job_id (RESTRICT)    │       │ company_source_id(FK)│
+│ title           │       │ raw_job_id (FK)      ├───────┤ raw_payload (JSONB)  │
+│ location        │       │ source_url           │       │ source_job_id        │
+│ eligibility_stat│       │ application_url      │       │ source_job_id_type   │
+│ role_priority   │       │ source_job_id        │       │ content_hash (SHA256)│
+│ verif_confidence│       │ source_job_id_type   │       │ collected_at         │
+└────────┬────────┘       │ source_data (JSONB)  │       └──────────────────────┘
+                          └──────────────────────┘
          │ 1
          ├───────────────────────────────────────┐
          │ 1                                     │ 1
@@ -336,7 +337,7 @@ The persistence layer uses a single **PostgreSQL** database. It combines relatio
 │ verification_records │                │ ai_analysis_results  │
 ├──────────────────────┤                ├──────────────────────┤
 │ id (PK)              │                │ id (PK)              │
-│ job_id (FK)          │                │ job_id (FK)          │
+│ job_id (RESTRICT)    │                │ job_id (SET NULL)    │
 │ jd_verified (bool)   │                │ cache_key (unique)   │
 │ source_verified      │                │ model_name           │
 │ experience_verified  │                │ prompt_version       │
@@ -348,12 +349,12 @@ The persistence layer uses a single **PostgreSQL** database. It combines relatio
 ### 6.1 Core Relational Tables
 1. **`companies`:** Canonical corporate directory (name, normalized name, website, sector, business model, verified status, confidence).
 2. **`sources`:** Registry of external discovery channels (e.g., `GREENHOUSE`, `LEVER`, `ASHBY`, `NAUKRI`).
-3. **`company_sources`:** Map connecting companies to their detected ATS tokens, direct career URLs, and scraper configurations.
-4. **`raw_jobs`:** Immutable append-only store preserving raw external payloads (`raw_payload JSONB`, `collected_at`, `source_name`).
+3. **`company_sources`:** Map connecting companies to their detected ATS tokens, direct career URLs, and scraper configurations. `ats_identifier` is nullable for generic career pages, enforced via PostgreSQL partial unique indexes (`uq_company_sources_ats`, `uq_company_sources_career_url`, `uq_company_sources_api_endpoint`, and `uq_company_sources_bare_mapping`) preventing duplicate configurations across all nullability combinations.
+4. **`raw_jobs`:** Immutable append-only store preserving raw external payloads. Anchored to `company_sources` via `company_source_id` to establish unambiguous origin provenance (`raw_payload JSONB`, `content_hash`, `collected_at`, `source_job_id`, `source_job_id_type`). Metadata is maintained strictly in dedicated columns, ensuring `raw_payload` remains byte-for-byte immutable.
 5. **`jobs`:** Canonical deduplicated job listings with normalized fields, current lifecycle status (`eligibility_status`), role priority (`role_priority`), and machine-readable rejection/review reasons.
-6. **`job_source_references`:** Link table preserving provenance. Every discovery of an opening on any platform links back to the canonical `jobs.id` and retains the platform-specific URL, timestamps, and extracted data.
-7. **`verification_records`:** Stores independent dimension verification outcomes and machine-readable audit trails.
-8. **`ai_analysis_results`:** Key-value cache indexed by `cache_key = SHA256(...)` storing structured LLM extractions.
+6. **`job_source_references`:** Link table preserving provenance. Every discovery of an opening on any platform links back to the canonical `jobs.id` and retains the platform-specific URL, timestamps, `source_job_id`, `source_job_id_type`, and extracted data. Enforces `ON DELETE RESTRICT` against `jobs(id)` to prevent accidental deletion of corroborated postings.
+7. **`verification_records`:** Stores independent dimension verification outcomes and machine-readable audit trails. Enforces `ON DELETE RESTRICT` against `jobs(id)`.
+8. **`ai_analysis_results`:** Key-value cache indexed by `cache_key = SHA256(...)` storing structured LLM extractions. Enforces `ON DELETE SET NULL` on `job_id` to permanently preserve cached inferences and token investments.
 9. **`collection_runs` / `discovery_runs`:** Observability tables logging execution durations, collector outcomes, HTTP statuses, and yield metrics.
 
 ---
@@ -367,7 +368,7 @@ To maintain the ₹0 cost model and avoid the operational overhead of Redis, Cel
 | :--- | :--- | :--- | :--- |
 | **High-Frequency Ingestion** | Interval | Every 3 hours | Queries direct ATS endpoints (Greenhouse, Lever, Ashby) for rapid discovery (0–24h fresh tier). |
 | **Daily Ingestion & Crawl** | Cron | Daily at 02:00 IST | Executes deeper career page crawls and portal harvests. |
-| **Freshness & Expiry Sweep** | Cron | Daily at 04:00 IST | Sweeps canonical jobs older than 5 days, transitioning them to `EXPIRED` (`JOB_TOO_OLD`) in the active feed. |
+| **Freshness & Expiry Sweep** | Cron | Daily at 04:00 IST | Sweeps canonical jobs older than 5 days based on original publication date (`posted_at`), transitioning them to `EXPIRED` (`JOB_TOO_OLD`) in the active feed. |
 | **Company Discovery Sweep** | Cron | Weekly on Sunday | Runs ATS detection against new companies added to the registry. |
 
 ### 7.2 Concurrency & Threading Model

@@ -65,7 +65,7 @@ This project adheres to a disciplined, production-grade engineering philosophy:
 - Core requirements defined in [`PROJECT_SCOPE.md`](docs/requirements/PROJECT_SCOPE.md).
 - Authoritative system specification and data contracts frozen in [`V1_SPECIFICATION.md`](docs/requirements/V1_SPECIFICATION.md) and [`JOB_DATA_CONTRACT.md`](docs/requirements/JOB_DATA_CONTRACT.md).
 - Deterministic filtering, deduplication, and verification rules frozen in [`JOB_FILTERS_V1.md`](rules/JOB_FILTERS_V1.md), [`DEDUPLICATION_V1.md`](rules/DEDUPLICATION_V1.md), and [`VERIFICATION_V1.md`](rules/VERIFICATION_V1.md).
-- System architecture, technology stack specifications, and decision records documented in [`SYSTEM_ARCHITECTURE_V1.md`](docs/architecture/SYSTEM_ARCHITECTURE_V1.md), [`TECH_STACK_V1.md`](docs/architecture/TECH_STACK_V1.md), and [`ARCHITECTURE_DECISIONS_V1.md`](docs/architecture/ARCHITECTURE_DECISIONS_V1.md).
+- System architecture, technology stack specifications, database schema, repository structure, and decision records documented in [`SYSTEM_ARCHITECTURE_V1.md`](docs/architecture/SYSTEM_ARCHITECTURE_V1.md), [`TECH_STACK_V1.md`](docs/architecture/TECH_STACK_V1.md), [`DATABASE_SCHEMA_V1.md`](docs/architecture/DATABASE_SCHEMA_V1.md), [`REPOSITORY_STRUCTURE_V1.md`](docs/architecture/REPOSITORY_STRUCTURE_V1.md), and [`ARCHITECTURE_DECISIONS_V1.md`](docs/architecture/ARCHITECTURE_DECISIONS_V1.md).
 
 ---
 

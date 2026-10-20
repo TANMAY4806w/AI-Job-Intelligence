@@ -24,13 +24,14 @@
 - [ADR-011: Strict Exclusion of Firecrawl from Core V1 Dependencies](#adr-011-strict-exclusion-of-firecrawl-from-core-v1-dependencies)
 - [ADR-012: Absolute Prohibition of Authenticated LinkedIn Scraping](#adr-012-absolute-prohibition-of-authenticated-linkedin-scraping)
 - [ADR-013: Rejection of Anti-Bot / CAPTCHA Bypass Mechanisms](#adr-013-rejection-of-anti-bot--captcha-bypass-mechanisms)
+- [ADR-014: Normalized Relational Core with Immutable Raw Evidence](#adr-014-normalized-relational-core-with-immutable-raw-evidence)
 
 ---
 
 ### ADR-001: Modular Monolith Architecture over Microservices
 - **Status:** Approved
 - **Context:** Building an intelligent job feed system requires ingestion, normalization, deduplication, verification, and filtering. Systems of this type are frequently over-engineered into distributed microservices with message buses (Kafka, RabbitMQ) and separate databases.
-- **Decision:** Build the V1 system as a single **Modular Monolith** in Python. Modules (Collectors, Ingestion, Normalization, Deduplication, Verification, Filter Rules, AI Gateway) interact via direct in-process method calls and strongly typed Pydantic models.
+- **Decision:** Build the V1 system as a single **Modular Monolith** in Python. Modules (Collectors, Ingestion, Normalization, Deduplication, Verification, Filter Rules, AI Gateway) interact via direct in-process method calls and strongly typed Pydantic models. The application codebase is organized under a root-level `app/` directory (resolving the placeholder `src/` directory to ensure direct Python module imports and native ASGI/FastAPI conventions).
 - **Consequences:**
   - *Positive:* Zero network serialization latency; single deployment artifact; frictionless local debugging; trivial transaction management; single-developer operational feasibility.
   - *Trade-off:* All components share the same application process; CPU-intensive tasks must not block the async event loop.
@@ -172,3 +173,26 @@
   - *Positive:* Strictly respects our ₹0 cost limit (CAPTCHA services are paid); prevents IP blacklisting; ensures clean ethical operation.
   - *Trade-off:* Aggressively protected proprietary job portals cannot be automatically crawled without public APIs.
 - **Alternatives Considered:** Paid residential proxies and CAPTCHA solvers (rejected due to cost, ethical boundaries, and high failure rates).
+
+---
+
+### ADR-014: Normalized Relational Core with Immutable Raw Evidence
+- **Status:** Approved
+- **Context:** Ingestion of job postings from diverse external platforms introduces varying schemas, missing fields, and recurring duplicates. Systems commonly choose between two extremes: a purely schemaless document store (e.g., MongoDB), which forfeits relational data integrity, or an aggressive relational normalizer that immediately overwrites or discards original source payloads.
+- **Decision:** Use **PostgreSQL** as the unified canonical persistence layer structured around a three-tier data hierarchy:
+  $$\text{Raw Evidence} \longrightarrow \text{Canonical Data} \longrightarrow \text{Derived Decisions}$$
+  1. **Raw Evidence (`raw_jobs`, `job_source_references`):** Unaltered external payloads stored in native PostgreSQL `JSONB` columns with SHA256 content hashes, establishing permanent provenance and auditability. `raw_jobs` is explicitly anchored to `company_sources` via `company_source_id` to establish unambiguous company endpoint provenance, with metadata (`source_job_id_type`, `collected_at`) maintained exclusively in dedicated columns to ensure `raw_payload` remains strictly unmutated.
+  2. **Canonical Data (`jobs`, `companies`, `sources`):** Strongly typed, normalized relational tables enforcing integrity, relationships, and deduplication across unique physical entities.
+  3. **Derived Decisions (`verification_records`, `filter_decisions`, `ai_analysis_results`):** Append-only evaluation records preserving rule execution history, multi-dimensional verification passes, and cached AI extractions. Foreign keys enforce `ON DELETE RESTRICT` on audit tables and `ON DELETE SET NULL` on `ai_analysis_results`, preventing accidental cascade deletions.
+- **Why:**
+  - Allows parser updates, rule changes, and feature enhancements to re-process historical discoveries without re-scraping external endpoints.
+  - Preserves exact source attribution across multi-source cross-postings (`job_source_references`).
+  - Guarantees referential integrity across companies, jobs, and audits via foreign key constraints.
+  - Supports rapid feed queries via B-Tree indexing on canonical status and priority fields.
+- **Consequences:**
+  - *Positive:* Zero information loss; full historical reproducibility; ACID guarantees prevent orphaned records; enables deterministic backtesting of rule engine changes; ₹0 operational cost.
+  - *Trade-off:* Database size grows steadily with raw payloads (managed via periodic archival of historical payloads older than 180 days).
+- **Alternatives Considered:**
+  - *Pure Document Store (e.g., MongoDB):* Rejected because lack of strict relational constraints risks orphaned job references, and document duplicates cannot easily maintain multi-source provenance.
+  - *Pure Relational Normalization without Raw JSONB:* Rejected because discarding raw external payloads makes it impossible to re-extract newly targeted fields or audit parsing bugs without re-scraping.
+  - *Separate Databases (e.g., Postgres for relational + MongoDB for raw payloads):* Rejected as unnecessary operational overhead violating the single-node simplicity mandate.

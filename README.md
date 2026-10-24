@@ -69,7 +69,17 @@ This project adheres to a disciplined, production-grade engineering philosophy:
 
 ---
 
-## 8. Placeholder Roadmap
+## 8. Test Execution Commands
+The test suite explicitly separates offline unit tests from PostgreSQL integration tests:
+- **Unit Tests (Default, Zero Database Required):** `uv run pytest tests/unit -v` (or simply `uv run pytest -v`)
+- **Integration Tests (Live PostgreSQL Required):** `uv run pytest tests/integration -v`
+- **Full Suite (Unit + Integration):** `uv run pytest tests -v`
+
+For full details on test architecture, prerequisites, and isolation guarantees, refer to [`tests/README.md`](tests/README.md).
+
+---
+
+## 9. Placeholder Roadmap
 - [x] **Phase 0: Project Initialization & Scope Definition** (Current)
 - [ ] **Phase 1: Domain Modeling & Canonical Schema Design**
 - [ ] **Phase 2: Source Discovery & Ingestion Pipeline**
@@ -81,5 +91,5 @@ This project adheres to a disciplined, production-grade engineering philosophy:
 
 ---
 
-## 9. Portfolio Project Note
+## 10. Portfolio Project Note
 This project is an independent **personal portfolio project** created to showcase production-oriented software design, data pipeline construction, disciplined engineering hygiene, and practical AI application without unnecessary complexity.

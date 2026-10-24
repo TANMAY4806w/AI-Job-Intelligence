@@ -38,8 +38,11 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests/unit"]
 pythonpath = ["."]
+markers = [
+    "integration: integration tests requiring a live PostgreSQL database",
+]
 filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::PendingDeprecationWarning",

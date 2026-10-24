@@ -1,6 +1,6 @@
 """PostgreSQL persistence layer.
 
-SQLAlchemy declarative ORM models and repository data access objects.
+SQLAlchemy declarative ORM models, session management, and repository data access objects.
 Boundary: Encapsulates database transactions; models reflect the 3-tier persistence architecture.
 """
 
@@ -19,6 +19,13 @@ from app.persistence.models import (
     VerificationRecord,
     metadata,
 )
+from app.persistence.session import (
+    dispose_engine,
+    get_db_session,
+    get_engine,
+    get_sessionmaker,
+    session_scope,
+)
 
 __all__ = [
     "Base",
@@ -34,4 +41,9 @@ __all__ = [
     "AIAnalysisResult",
     "DiscoveryRun",
     "CollectionRun",
+    "dispose_engine",
+    "get_db_session",
+    "get_engine",
+    "get_sessionmaker",
+    "session_scope",
 ]

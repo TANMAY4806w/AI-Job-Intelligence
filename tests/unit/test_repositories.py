@@ -527,6 +527,15 @@ async def test_job_repository_deduplication_queries(mock_session: AsyncMock) -> 
     stage2 = await repo.get_by_application_url("https://boards.greenhouse.io/acme/jobs/ext_job_999")
     assert stage2 is mock_job
 
+    # Stage 2: Find all by application URL
+    mock_scalars = MagicMock()
+    mock_scalars.all.return_value = [mock_job]
+    mock_result.scalars.return_value = mock_scalars
+    stage2_all = await repo.find_all_by_application_url(
+        "https://boards.greenhouse.io/acme/jobs/ext_job_999"
+    )
+    assert stage2_all == [mock_job]
+
     # Stage 3: Find by composite attributes
     mock_scalars = MagicMock()
     mock_scalars.all.return_value = [mock_job]

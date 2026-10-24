@@ -57,6 +57,30 @@ class JobRepository(BaseRepository):
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def find_all_by_application_url(
+        self,
+        application_url: str,
+    ) -> Sequence[Job]:
+        """Find all distinct canonical Jobs matching an application ATS URL (Stage 2 deduplication).
+
+        Checks both direct Job.application_url and linked JobSourceReference.application_url.
+        Does not limit to 1 so that multi-match conflicts can be detected and flagged.
+        """
+        stmt = (
+            select(Job)
+            .outerjoin(Job.source_references)
+            .where(
+                or_(
+                    Job.application_url == application_url,
+                    JobSourceReference.application_url == application_url,
+                )
+            )
+            .distinct()
+            .order_by(Job.posted_at.desc().nullslast())
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
     async def find_by_composite_attributes(
         self,
         company_id: uuid.UUID,

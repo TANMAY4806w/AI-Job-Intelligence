@@ -19,6 +19,15 @@ from app.persistence.models import (
     VerificationRecord,
     metadata,
 )
+from app.persistence.repositories import (
+    BaseRepository,
+    CompanyRepository,
+    CompanySourceRepository,
+    JobRepository,
+    JobSourceReferenceRepository,
+    RawJobRepository,
+    SourceRepository,
+)
 from app.persistence.session import (
     dispose_engine,
     get_db_session,
@@ -41,6 +50,13 @@ __all__ = [
     "AIAnalysisResult",
     "DiscoveryRun",
     "CollectionRun",
+    "BaseRepository",
+    "CompanyRepository",
+    "CompanySourceRepository",
+    "JobRepository",
+    "JobSourceReferenceRepository",
+    "RawJobRepository",
+    "SourceRepository",
     "dispose_engine",
     "get_db_session",
     "get_engine",

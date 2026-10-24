@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -57,6 +58,13 @@ class RawJob(Base):
         server_default=text("'NATIVE'"),
     )
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    payload_format: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="JSON",
+        server_default=text("'JSON'"),
+    )
+    raw_body: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     raw_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)

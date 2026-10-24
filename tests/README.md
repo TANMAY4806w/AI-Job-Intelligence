@@ -9,11 +9,11 @@ This directory contains the automated test suites for **AI Job Intelligence**, s
 - `tests/unit/`: **Unit Tests**
   - Offline, isolated, and fast.
   - Requires **zero external infrastructure** (no running PostgreSQL database, no network).
-  - Validates API routers, declarative SQLAlchemy ORM models, Alembic offline DDL generation, session lifecycle, transaction rollback, and FastAPI lifespan handlers using in-memory objects or mocks.
+  - Validates API routers, declarative SQLAlchemy ORM models, repository query construction, Alembic offline DDL generation, session lifecycle, transaction rollback, and FastAPI lifespan handlers using in-memory objects or mocks.
 - `tests/integration/`: **PostgreSQL Integration Tests**
   - Requires an active, reachable PostgreSQL instance with migrations applied.
   - Connects using settings configured in `.env` (`DATABASE_URL`).
-  - Verifies live connectivity, schema integrity, and ORM insertion, flushing, and querying.
+  - Verifies live connectivity, schema integrity, repository persistence and deduplication queries, and ORM operations.
   - **Transaction Isolation:** Uses uncommitted transactions or explicit rollback guarantees to ensure zero persistent test data leaks into the database.
 - `tests/fixtures/`: Shared test data payloads and mocks.
 - `tests/conftest.py`: Root pytest fixtures (e.g., FastAPI `TestClient`).

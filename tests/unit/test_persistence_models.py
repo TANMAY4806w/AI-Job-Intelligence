@@ -5,7 +5,7 @@ deletion policies, partial unique indexes, and mapper configurations
 without requiring a live PostgreSQL connection.
 """
 
-from sqlalchemy import CheckConstraint, UniqueConstraint, Uuid
+from sqlalchemy import CheckConstraint, LargeBinary, UniqueConstraint, Uuid
 from sqlalchemy.orm import configure_mappers
 
 from app.persistence.models import (
@@ -103,6 +103,9 @@ def test_raw_job_identifier_type_and_immutability() -> None:
     raw_jobs = metadata.tables["raw_jobs"]
     jsr = metadata.tables["job_source_references"]
 
+    assert raw_jobs.c["raw_body"].nullable is False
+    assert isinstance(raw_jobs.c["raw_body"].type, LargeBinary)
+    assert raw_jobs.c["payload_format"].nullable is False
     assert raw_jobs.c["source_job_id_type"].nullable is False
     assert raw_jobs.c["raw_payload"].nullable is False
     assert raw_jobs.c["content_hash"].nullable is False

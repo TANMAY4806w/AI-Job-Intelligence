@@ -92,7 +92,7 @@ async def test_source_orm_insert_flush_read_and_rollback() -> None:
     except (OSError, SQLAlchemyError) as exc:
         pytest.fail(
             f"PostgreSQL integration prerequisite unavailable: database operation failed. "
-            f"Ensure PostgreSQL is running and schema migration 091bce25752c is applied. Details: {exc}"
+            f"Ensure PostgreSQL is running and latest schema migrations are applied. Details: {exc}"
         )
 
 
@@ -143,5 +143,5 @@ async def test_company_orm_insert_flush_read_and_rollback() -> None:
     except (OSError, SQLAlchemyError) as exc:
         pytest.fail(
             f"PostgreSQL integration prerequisite unavailable: database operation failed. "
-            f"Ensure PostgreSQL is running and schema migration 091bce25752c is applied. Details: {exc}"
+            f"Ensure PostgreSQL is running and latest schema migrations are applied. Details: {exc}"
         )

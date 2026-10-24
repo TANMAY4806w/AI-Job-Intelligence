@@ -25,12 +25,13 @@ def test_alembic_config_and_script_directory() -> None:
     heads = script_dir.get_heads()
 
     assert len(heads) == 1, f"Expected exactly 1 migration head revision, found {heads}"
-    assert heads[0] == "091bce25752c", f"Unexpected head revision: {heads[0]}"
+    assert heads[0] == "05377f2ddb14", f"Unexpected head revision: {heads[0]}"
 
-    rev = script_dir.get_revision("091bce25752c")
-    assert rev is not None, "Revision 091bce25752c must exist"
-    assert hasattr(rev.module, "upgrade"), "Revision must define upgrade()"
-    assert hasattr(rev.module, "downgrade"), "Revision must define downgrade()"
+    for rev_id in ("091bce25752c", "0dcb0808bacc", "05377f2ddb14"):
+        rev = script_dir.get_revision(rev_id)
+        assert rev is not None, f"Revision {rev_id} must exist"
+        assert hasattr(rev.module, "upgrade"), f"Revision {rev_id} must define upgrade()"
+        assert hasattr(rev.module, "downgrade"), f"Revision {rev_id} must define downgrade()"
 
 
 def test_alembic_env_targets_base_metadata() -> None:
@@ -92,3 +93,12 @@ def test_offline_sql_generation_succeeds() -> None:
     # Verify deletion rules
     assert "ON DELETE RESTRICT" in sql_output
     assert "ON DELETE SET NULL" in sql_output
+
+    # Verify exact raw body addition in forward migration
+    assert "ALTER TABLE raw_jobs ADD COLUMN raw_body BYTEA NOT NULL" in sql_output
+
+    # Verify format-aware column addition in forward migration
+    assert (
+        "ALTER TABLE raw_jobs ADD COLUMN payload_format VARCHAR(20) DEFAULT 'JSON' NOT NULL"
+        in sql_output
+    )

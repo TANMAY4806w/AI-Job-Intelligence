@@ -25,6 +25,7 @@
 - [ADR-012: Absolute Prohibition of Authenticated LinkedIn Scraping](#adr-012-absolute-prohibition-of-authenticated-linkedin-scraping)
 - [ADR-013: Rejection of Anti-Bot / CAPTCHA Bypass Mechanisms](#adr-013-rejection-of-anti-bot--captcha-bypass-mechanisms)
 - [ADR-014: Normalized Relational Core with Immutable Raw Evidence](#adr-014-normalized-relational-core-with-immutable-raw-evidence)
+- [ADR-015: Exact Raw-Response Wire Byte Preservation via Dual Storage (BYTEA + JSONB)](#adr-015-exact-raw-response-wire-byte-preservation-via-dual-storage-bytea--jsonb)
 
 ---
 
@@ -196,3 +197,26 @@
   - *Pure Document Store (e.g., MongoDB):* Rejected because lack of strict relational constraints risks orphaned job references, and document duplicates cannot easily maintain multi-source provenance.
   - *Pure Relational Normalization without Raw JSONB:* Rejected because discarding raw external payloads makes it impossible to re-extract newly targeted fields or audit parsing bugs without re-scraping.
   - *Separate Databases (e.g., Postgres for relational + MongoDB for raw payloads):* Rejected as unnecessary operational overhead violating the single-node simplicity mandate.
+
+---
+
+### ADR-015: Exact Raw-Response Wire Byte Preservation via Dual Storage (BYTEA + JSONB)
+- **Status:** Approved
+- **Context:** The system architecture mandates immutable preservation of external source responses for zero data loss, forensic reproducibility, and rule engine backtesting. While ADR-014 adopted PostgreSQL `JSONB` for raw evidence storage, PostgreSQL's binary JSON storage engine decomposes JSON text: it strips insignificant whitespace, re-orders object keys, and deduplicates duplicate keys. Consequently, `JSONB` alone cannot guarantee literal byte-for-byte wire fidelity, nor can `SHA256(jsonb_serialize(raw_payload))` reliably verify cryptographic immutability against the original ingested HTTP response bytes.
+- **Decision:** Implement a format-aware dual-storage persistence design in `raw_jobs`:
+  1. **`raw_body` (`BYTEA NOT NULL`):** Preserves the exact, unaltered original HTTP response wire bytes received from the source server (both JSON APIs and HTML career pages).
+  2. **`payload_format` (`VARCHAR(20) NOT NULL DEFAULT 'JSON'`):** Identifies the response media format (`'JSON'` or `'HTML'`), driving deterministic validation and downstream offline re-parsing.
+  3. **`raw_payload` (`JSONB NOT NULL`):** Preserves structured data suitable for PostgreSQL JSONB querying. For JSON responses, this is verified to match the parsed response object; for HTML responses, this contains structured fields extracted by the source parser (not fabricated by the repository).
+  4. **`content_hash` (`CHAR(64)` / `VARCHAR(64) NOT NULL`):** Stores the SHA-256 hexadecimal digest computed directly from `raw_body`, providing cryptographic proof that the stored wire bytes match the ingested response, enabling tamper detection upon audit and instant duplicate payload detection.
+  The ingestion pipeline and repository layer enforce format-aware validation: for JSON responses, `raw_payload` is validated against parsed `raw_body`; for HTML responses, raw HTML bytes are preserved in `raw_body` while `raw_payload` holds parser-extracted data. Payloads with hash mismatches or unsupported formats are rejected. The repository enforces strictly append-only semantics (omitting `update`, `delete`, and `upsert` operations).
+- **Enforcement & Immutability Boundaries:**
+  - *Exact Byte Preservation:* Guaranteed for `raw_body` (`BYTEA`) against PostgreSQL JSON decomposition.
+  - *Tamper-Evidence:* Guaranteed by `content_hash` at insertion and upon audit. Storing a hash enables detection of divergence between `raw_body` and its insertion-time digest, but a hash alone does not prevent out-of-band database modification if an authorized database user executes direct SQL `UPDATE` or `DELETE`.
+  - *Append-Only Enforcement:* Enforced at the application repository layer by omitting mutating methods (`update`, `delete`, `upsert`).
+  - *Database Engine Level:* Active prevention of direct SQL modifications at the database layer relies on operational database user role privilege management (e.g., granting only `SELECT, INSERT` to application roles in production) rather than active database DDL triggers.
+- **Consequences:**
+  - *Positive:* 100% forensic wire-byte fidelity; tamper-evident auditability and verification at rest; full JSONB querying and indexing capabilities retained; clean compliance with frozen schema byte-for-byte immutability mandates.
+  - *Trade-off:* Modest storage footprint increase (~1.8x to 2.2x per `raw_jobs` record), mitigated by Postgres TOAST compression and cold-storage access patterns for `raw_body`.
+- **Alternatives Considered:**
+  - *Semantic JSON Preservation with JSONB Alone:* Rejected because `JSONB` inherently normalizes formatting and key ordering, failing literal byte-level reproducibility and hash verification.
+  - *Binary-Only Storage (`BYTEA` alone without `JSONB`):* Rejected because querying and backtesting would require deserializing compressed binary bytes in application memory for every query, eliminating native database JSON filtering.

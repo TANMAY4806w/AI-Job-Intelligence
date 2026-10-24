@@ -21,7 +21,7 @@ All data within the system is strictly partitioned into three conceptual layers:
 │       RAW EVIDENCE       │       │      CANONICAL DATA      │       │    DERIVED DECISIONS     │
 │   (Immutable Ingestion)  │──────>│ (Deduplicated Entities)  │──────>│   (Audit & Evaluations)  │
 ├──────────────────────────┤       ├──────────────────────────┤       ├──────────────────────────┤
-│ • raw_jobs (JSONB)       │       │ • companies              │       │ • verification_records   │
+│ • raw_jobs (BYTEA+JSONB) │       │ • companies              │       │ • verification_records   │
 │ • job_source_references  │       │ • jobs                   │       │ • filter_decisions       │
 │ • company_sources        │       │ • sources                │       │ • ai_analysis_results    │
 └──────────────────────────┘       └──────────────────────────┘       └──────────────────────────┘
@@ -32,7 +32,7 @@ All data within the system is strictly partitioned into three conceptual layers:
 3. **Derived Decisions (Auditable History):** Rule filtering outcomes, multi-dimensional verification records, and AI ambiguity resolutions are stored as append-only historical events. When rules or prompts are updated, historical evaluations remain intact, enabling reproducible regression testing and auditability.
 
 ### 1.2 Core Data Design Directives
-- **Raw Payload Preservation:** `raw_jobs.raw_payload` is stored as PostgreSQL `JSONB`. Raw records are never destructively modified or overwritten.
+- **Raw Payload Preservation:** Exact source-response bytes are preserved in `raw_jobs.raw_body` (`BYTEA`), while parsed structured data is stored in `raw_jobs.raw_payload` (`JSONB`). Raw records are strictly append-only at the repository layer and never destructively modified or overwritten.
 - **Relational Integrity:** Foreign key constraints enforce referential integrity across companies, jobs, sources, and audit tables, preventing orphaned records.
 - **Append-Only Auditing:** Verification events, filter evaluations, and AI inference runs are append-only. A job re-evaluated under a new rule version receives a new `filter_decisions` entry rather than overwriting historical evaluations.
 - **No Premature Deletions:** Postings older than the active feed window (> 5 days) transition their operational status to `EXPIRED`, but their underlying records, source links, and audit trails remain permanently stored in the database.
@@ -252,8 +252,10 @@ All data within the system is strictly partitioned into three conceptual layers:
   - `source_job_id`: `VARCHAR(255)` — External job identifier provided by the external system (or deterministic `"gen_<hash>"` for generic career pages lacking native IDs).
   - `source_job_id_type`: `VARCHAR(20)` — External identifier classification: `'NATIVE'` (structured ATS identifier provided by platform) or `'GENERATED'` (deterministic hash for generic career pages lacking native IDs). Default: `'NATIVE'`.
   - `source_url`: `TEXT` — Exact URL where this posting was fetched.
-  - `raw_payload`: `JSONB` — Un-mutated, full external payload (JSON response or structured HTML text payload).
-  - `content_hash`: `CHAR(64)` — SHA256 hexadecimal hash of the serialized raw payload for instant duplicate payload detection.
+  - `payload_format`: `VARCHAR(20)` — External payload format: `'JSON'` (structured API response) or `'HTML'` (crawled career page). Default: `'JSON'`.
+  - `raw_body`: `BYTEA` — Exact original HTTP response wire bytes, preserved unaltered for cryptographic fidelity.
+  - `raw_payload`: `JSONB` — Structured JSON representation for querying and backtesting (parsed JSON API response or parser-extracted HTML fields).
+  - `content_hash`: `CHAR(64)` — SHA256 hexadecimal hash of `raw_body` for instant duplicate payload detection and tamper-evident verification.
   - `http_status`: `INTEGER` — HTTP status code returned during capture (e.g., 200).
   - `collected_at`: `TIMESTAMPTZ` — Timestamp when this raw record was captured into the database (ingestion metadata only; does NOT serve as freshness basis).
 - **Derived Provenance:**
@@ -261,7 +263,7 @@ All data within the system is strictly partitioned into three conceptual layers:
   - `source_id`: Derived via `company_sources.source_id`.
   - `source_name`: Derived via `company_sources -> sources.source_name`.
 - **Nullability:**
-  - *Required:* `id`, `company_source_id`, `source_job_id`, `source_job_id_type`, `source_url`, `raw_payload`, `content_hash`, `collected_at`.
+  - *Required:* `id`, `company_source_id`, `source_job_id`, `source_job_id_type`, `source_url`, `payload_format`, `raw_body`, `raw_payload`, `content_hash`, `collected_at`.
   - *Nullable:* `collection_run_id`, `http_status`.
 - **Uniqueness & Partial Unique Index Architecture:**
   - Append-only design. No restrictive database-level unique constraint on `(company_source_id, source_job_id)` in `raw_jobs`, ensuring recurring daily observations of the same job on a configured endpoint are permanently recorded as temporal evidence.
@@ -276,8 +278,10 @@ All data within the system is strictly partitioned into three conceptual layers:
   - Transitive provenance access to `companies` and `sources` via `company_sources`.
   - One-to-many with `job_source_references` (`raw_jobs.id -> job_source_references.raw_job_id`).
 - **Payload Immutability & Dedicated Metadata Architecture:**
-  - `raw_payload` is stored as an immutable, byte-for-byte exact JSONB representation of the server response.
-  - Ingestion metadata such as `source_job_id_type`, `collected_at`, and `content_hash` are stored exclusively in dedicated table columns. The pipeline **never** mutates or injects synthetic properties into `raw_payload`.
+  - `raw_body` is stored as an unaltered, byte-for-byte exact `BYTEA` representation of the original HTTP wire response.
+  - `raw_payload` is stored as an un-mutated semantic `JSONB` representation of the parsed payload for structured querying and pipeline backtesting.
+  - Ingestion metadata such as `source_job_id_type`, `collected_at`, and `content_hash` are stored exclusively in dedicated table columns. `content_hash` stores the SHA-256 digest of `raw_body`, providing tamper-evident auditability and rapid duplicate detection. The pipeline **never** mutates or injects synthetic properties into `raw_payload` or `raw_body`.
+  - *Immutability Enforcement Boundaries:* Append-only semantics are enforced at the repository API layer (omitting `UPDATE`/`DELETE` methods). Tamper-evidence is verifiable by recomputing `SHA256(raw_body)`. Prevention of out-of-band direct SQL mutations at the database level is an operational database role permission boundary (e.g., granting only `INSERT, SELECT` to runtime roles).
 - **Lifecycle Expectations:**
   - Strictly append-only. Never updated or destructively pruned during normal operations.
 

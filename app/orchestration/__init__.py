@@ -8,8 +8,14 @@ from app.orchestration.decision_service import (
     JobFilterDecisionOutcome,
     JobFilterDecisionService,
 )
+from app.orchestration.verification_service import (
+    JobVerificationOutcome,
+    JobVerificationService,
+)
 
 __all__ = [
     "JobFilterDecisionOutcome",
     "JobFilterDecisionService",
+    "JobVerificationOutcome",
+    "JobVerificationService",
 ]

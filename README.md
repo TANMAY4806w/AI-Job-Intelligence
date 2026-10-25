@@ -79,7 +79,29 @@ For full details on test architecture, prerequisites, and isolation guarantees, 
 
 ---
 
-## 9. Placeholder Roadmap
+## 9. Operator CLI (Greenhouse Manual Collection)
+The project includes a lightweight operator CLI to configure company Greenhouse job boards and trigger manual collection end-to-end:
+
+```bash
+# View CLI help
+uv run python -m app.cli --help
+uv run python -m app.cli greenhouse --help
+
+# Configure a company and run manual collection
+uv run python -m app.cli greenhouse collect --company-name "Figma" --board-token "figma"
+
+# Onboard a company board without running collection
+uv run python -m app.cli greenhouse onboard --company-name "Stripe" --board-token "stripe"
+
+# List configured company boards
+uv run python -m app.cli greenhouse list
+```
+
+For complete instructions on discovering board tokens, inspecting results, and failure diagnosis, see [`docs/operations/MANUAL_COLLECTION_GUIDE.md`](docs/operations/MANUAL_COLLECTION_GUIDE.md).
+
+---
+
+## 10. Placeholder Roadmap
 - [x] **Phase 0: Project Initialization & Scope Definition** (Current)
 - [ ] **Phase 1: Domain Modeling & Canonical Schema Design**
 - [ ] **Phase 2: Source Discovery & Ingestion Pipeline**
@@ -91,5 +113,5 @@ For full details on test architecture, prerequisites, and isolation guarantees, 
 
 ---
 
-## 10. Portfolio Project Note
+## 11. Portfolio Project Note
 This project is an independent **personal portfolio project** created to showcase production-oriented software design, data pipeline construction, disciplined engineering hygiene, and practical AI application without unnecessary complexity.

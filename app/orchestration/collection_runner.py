@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import inspect
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,6 +46,21 @@ logger = logging.getLogger(__name__)
 
 STATUS_SKIPPED_INACTIVE = "SKIPPED_INACTIVE"
 STATUS_UNSUPPORTED_SOURCE = "UNSUPPORTED_SOURCE"
+
+
+def _get_loaded_relationship(instance: Any, attr_name: str) -> Any:
+    """Return relationship attribute only if already loaded in memory without triggering I/O.
+
+    Inspects SQLAlchemy instance state to confirm the attribute is neither unloaded
+    nor expired, avoiding MissingGreenlet exceptions in asynchronous runtime contexts.
+    """
+    insp = inspect(instance, raiseerr=False)
+    if insp is None:
+        # Non-ORM mock or plain object
+        return getattr(instance, attr_name, None)
+    if attr_name in insp.unloaded or attr_name in insp.expired_attributes:
+        return None
+    return instance.__dict__.get(attr_name)
 
 
 class MappingCollectionOutcome(BaseModel):
@@ -328,7 +344,29 @@ class CollectionRunner:
         else:
             resolved_cs = company_source
 
-        cs_id = resolved_cs.id
+        # Resolve CompanySource primary key safely without triggering lazy load on expired instances
+        insp = inspect(resolved_cs, raiseerr=False)
+        cs_id: uuid.UUID | None = None
+        if insp is not None:
+            if insp.identity is not None and len(insp.identity) > 0:
+                cs_id = insp.identity[0]
+            elif "id" in resolved_cs.__dict__:
+                cs_id = resolved_cs.__dict__["id"]
+        if cs_id is None:
+            cs_id = getattr(resolved_cs, "id", None)
+
+        # Ensure CompanySource mapped columns are refreshed if expired
+        if (
+            insp is not None
+            and (insp.expired or "source_id" in insp.expired_attributes)
+            and cs_id is not None
+        ):
+            refreshed = await self.company_source_repo.get_by_id(cs_id)
+            if refreshed is not None:
+                resolved_cs = refreshed
+
+        if cs_id is None:
+            cs_id = getattr(resolved_cs, "id", None)
 
         # 2. Check mapping active state
         if not resolved_cs.is_active:
@@ -345,7 +383,7 @@ class CollectionRunner:
             )
 
         # 3. Resolve and validate Source platform
-        resolved_source = getattr(resolved_cs, "source", None)
+        resolved_source = _get_loaded_relationship(resolved_cs, "source")
         if resolved_source is None:
             resolved_source = await self.source_repo.get_by_id(resolved_cs.source_id)
 
@@ -379,7 +417,7 @@ class CollectionRunner:
             )
 
         # 4. Resolve and validate Company entity
-        resolved_company = getattr(resolved_cs, "company", None)
+        resolved_company = _get_loaded_relationship(resolved_cs, "company")
         if resolved_company is None:
             resolved_company = await self.company_repo.get_by_id(resolved_cs.company_id)
 

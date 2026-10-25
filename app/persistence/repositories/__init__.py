@@ -5,6 +5,7 @@ All repositories accept an active AsyncSession; transaction boundaries remain wi
 """
 
 from app.persistence.repositories.base import BaseRepository
+from app.persistence.repositories.collection_run_repository import CollectionRunRepository
 from app.persistence.repositories.company_repository import CompanyRepository
 from app.persistence.repositories.company_source_repository import CompanySourceRepository
 from app.persistence.repositories.filter_decision_repository import FilterDecisionRepository
@@ -20,6 +21,7 @@ from app.persistence.repositories.verification_record_repository import (
 
 __all__ = [
     "BaseRepository",
+    "CollectionRunRepository",
     "CompanyRepository",
     "CompanySourceRepository",
     "FilterDecisionRepository",

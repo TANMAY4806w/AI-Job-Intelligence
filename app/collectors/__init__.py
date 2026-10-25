@@ -15,17 +15,33 @@ from app.collectors.base.collector import (
     JobCollectionFailure,
 )
 from app.collectors.base.http import PoliteHttpClient
-from app.collectors.greenhouse.collector import GreenhouseCollector
+from app.collectors.greenhouse.collector import (
+    GREENHOUSE_API_BASE,
+    GreenhouseCollector,
+    validate_board_token,
+)
+from app.collectors.registry import (
+    CollectorRegistry,
+    CollectorRegistryError,
+    UnsupportedSourceError,
+    default_collector_registry,
+)
 
 __all__ = [
+    "GREENHOUSE_API_BASE",
     "STATUS_EMPTY",
     "STATUS_FAILED",
     "STATUS_PARTIAL_SUCCESS",
     "STATUS_SUCCESS",
     "BaseCollector",
     "CollectionStatus",
+    "CollectorRegistry",
+    "CollectorRegistryError",
     "CollectorResult",
     "GreenhouseCollector",
     "JobCollectionFailure",
     "PoliteHttpClient",
+    "UnsupportedSourceError",
+    "default_collector_registry",
+    "validate_board_token",
 ]

@@ -162,3 +162,11 @@ class CompanySourceRepository(BaseRepository):
         self.session.add(company_source)
         await self.session.flush()
         return company_source
+
+    async def update(self, company_source: CompanySource) -> CompanySource:
+        """Flush changes to a tracked CompanySource entity.
+
+        Does not commit the transaction.
+        """
+        await self.session.flush()
+        return company_source

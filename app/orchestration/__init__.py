@@ -4,6 +4,13 @@ Coordinates end-to-end data workflows for both manual API triggers and scheduled
 Boundary: Zero business rules, zero scraping logic, and zero direct SQL queries.
 """
 
+from app.orchestration.collection_runner import (
+    STATUS_SKIPPED_INACTIVE,
+    STATUS_UNSUPPORTED_SOURCE,
+    CollectionRunner,
+    CollectionRunnerResult,
+    MappingCollectionOutcome,
+)
 from app.orchestration.decision_service import (
     JobFilterDecisionOutcome,
     JobFilterDecisionService,
@@ -23,6 +30,8 @@ from app.orchestration.verification_service import (
 )
 
 __all__ = [
+    "CollectionRunner",
+    "CollectionRunnerResult",
     "JobFilterDecisionOutcome",
     "JobFilterDecisionService",
     "JobIngestionEnvelope",
@@ -31,7 +40,10 @@ __all__ = [
     "JobIngestionService",
     "JobVerificationOutcome",
     "JobVerificationService",
+    "MappingCollectionOutcome",
     "STATUS_AMBIGUOUS_DUPLICATE",
     "STATUS_PROCESSED_MATCH",
     "STATUS_PROCESSED_NEW",
+    "STATUS_SKIPPED_INACTIVE",
+    "STATUS_UNSUPPORTED_SOURCE",
 ]

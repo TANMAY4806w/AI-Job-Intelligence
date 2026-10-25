@@ -8,14 +8,16 @@ vacancies are passed directly to JobIngestionService for normalization and evalu
 import uuid
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.collectors.base.http import PoliteHttpClient
-from app.orchestration.ingestion_service import JobIngestionService
 from app.persistence.models.company import Company
 from app.persistence.models.source import CompanySource
+
+if TYPE_CHECKING:
+    from app.orchestration.ingestion_service import JobIngestionService
 
 STATUS_SUCCESS = "SUCCESS"
 STATUS_PARTIAL_SUCCESS = "PARTIAL_SUCCESS"
@@ -139,7 +141,7 @@ class BaseCollector(ABC):
 
     def __init__(
         self,
-        ingestion_service: JobIngestionService,
+        ingestion_service: "JobIngestionService",
         *,
         http_client: PoliteHttpClient | None = None,
     ) -> None:

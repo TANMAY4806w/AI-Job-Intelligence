@@ -163,6 +163,36 @@ class JobFilterInput(BaseModel):
             posting_date_verified=posting_date_verified,
         )
 
+    @classmethod
+    def from_job(
+        cls,
+        job: Any,
+        *,
+        posting_date_verified: bool | None = None,
+    ) -> "JobFilterInput":
+        """Factory to build JobFilterInput from a canonical Job persistence entity."""
+        return cls(
+            title=getattr(job, "title", ""),
+            normalized_title=getattr(job, "normalized_title", None),
+            description=getattr(job, "description", "") or "",
+            company_name=getattr(job, "company_name", None),
+            company_id=getattr(job, "company_id", None),
+            location=getattr(job, "location", None),
+            normalized_location=getattr(job, "normalized_location", None),
+            employment_type=getattr(job, "employment_type", None),
+            remote_type=getattr(job, "remote_type", "UNKNOWN") or "UNKNOWN",
+            experience_raw=getattr(job, "experience_raw", None),
+            experience_min_years=getattr(job, "experience_min_years", None),
+            experience_max_years=getattr(job, "experience_max_years", None),
+            salary_min=getattr(job, "salary_min", None),
+            salary_max=getattr(job, "salary_max", None),
+            salary_currency=getattr(job, "salary_currency", "INR") or "INR",
+            salary_period=getattr(job, "salary_period", None),
+            posted_at=getattr(job, "posted_at", None),
+            collected_at=getattr(job, "collected_at", None),
+            posting_date_verified=posting_date_verified,
+        )
+
 
 class JobFilterResult(BaseModel):
     """Deterministic filtering outcome and immutable audit record.

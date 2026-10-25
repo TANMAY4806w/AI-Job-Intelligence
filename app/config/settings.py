@@ -28,6 +28,7 @@ class Settings(BaseSettings):
 
     # Persistence (PostgreSQL)
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/job_intelligence_dev"
+    TEST_DATABASE_URL: str | None = None
 
     # Scheduling
     SCHEDULER_ENABLED: bool = False

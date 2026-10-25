@@ -72,10 +72,10 @@ This project adheres to a disciplined, production-grade engineering philosophy:
 ## 8. Test Execution Commands
 The test suite explicitly separates offline unit tests from PostgreSQL integration tests:
 - **Unit Tests (Default, Zero Database Required):** `uv run pytest tests/unit -v` (or simply `uv run pytest -v`)
-- **Integration Tests (Live PostgreSQL Required):** `uv run pytest tests/integration -v`
+- **Integration Tests (Dedicated Test Database Required):** `uv run pytest tests/integration -v` (requires `TEST_DATABASE_URL` configured in `.env` pointing to `job_intelligence_test`)
 - **Full Suite (Unit + Integration):** `uv run pytest tests -v`
 
-For full details on test architecture, prerequisites, and isolation guarantees, refer to [`tests/README.md`](tests/README.md).
+For full details on test architecture, prerequisites, fail-fast isolation guards, and cleanup guarantees, refer to [`tests/README.md`](tests/README.md).
 
 ---
 

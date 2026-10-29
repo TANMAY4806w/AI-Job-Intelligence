@@ -14,6 +14,7 @@ from app.cli.greenhouse import (
     execute_greenhouse_collection,
     onboard_greenhouse_mapping,
 )
+from app.cli.reevaluate import execute_dry_run_reevaluation
 from app.persistence.repositories.company_repository import CompanyRepository
 from app.persistence.repositories.company_source_repository import CompanySourceRepository
 from app.persistence.repositories.source_repository import SourceRepository
@@ -137,6 +138,58 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="Output mappings in JSON format",
+    )
+
+    # =========================================================================
+    # Re-evaluate Subcommand (Dry Run)
+    # =========================================================================
+    reeval_parser = subparsers.add_parser(
+        "reevaluate",
+        help="Re-evaluate verification and eligibility rules for stored jobs (dry run)",
+        description="Calculate updated verification and eligibility outcomes for stored jobs without database mutation.",
+    )
+    reeval_parser.add_argument(
+        "-c",
+        "--company-name",
+        type=str,
+        help="Hiring organization name (e.g. 'Figma')",
+    )
+    reeval_parser.add_argument(
+        "-i",
+        "--company-id",
+        type=str,
+        help="Company UUID in database",
+    )
+    reeval_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=True,
+        help="Execute in read-only dry-run mode (default: True)",
+    )
+    reeval_parser.add_argument(
+        "--no-dry-run",
+        dest="dry_run",
+        action="store_false",
+        help="Attempt mutating execution (strictly forbidden in V1; will error)",
+    )
+    reeval_parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output complete comparative report in JSON format",
+    )
+    reeval_parser.add_argument(
+        "-o",
+        "--output-file",
+        type=str,
+        default=None,
+        help="Optional file path to write full JSON report",
+    )
+    reeval_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Optional maximum number of jobs to re-evaluate",
     )
 
     return parser
@@ -325,6 +378,21 @@ async def _handle_greenhouse_list(args: argparse.Namespace) -> int:
         return 0
 
 
+async def _handle_reevaluate(args: argparse.Namespace) -> int:
+    """Handle 'reevaluate' command execution."""
+    async with session_scope() as session:
+        _, exit_code = await execute_dry_run_reevaluation(
+            session=session,
+            company_name=args.company_name,
+            company_id=args.company_id,
+            dry_run=args.dry_run,
+            output_json=args.json,
+            output_file=args.output_file,
+            limit=args.limit,
+        )
+        return exit_code
+
+
 async def async_main(args: argparse.Namespace) -> int:
     """Dispatch CLI arguments asynchronously to appropriate handler."""
     try:
@@ -341,6 +409,8 @@ async def async_main(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 return 2
+        elif args.subcommand == "reevaluate":
+            return await _handle_reevaluate(args)
         else:
             print(
                 "ERROR: Unrecognized subcommand. Use --help to view available commands.",

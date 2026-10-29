@@ -147,6 +147,33 @@ KNOWN_NON_TARGET_CITIES: list[tuple[str, list[str]]] = [
             r"\bcoimbatore\b",
         ],
     ),
+    (
+        "Tel Aviv",
+        [
+            r"\btel\s+aviv\b",
+            r"\btel-aviv\b",
+            r"\btlv\b",
+        ],
+    ),
+    (
+        "São Paulo",
+        [
+            r"\bs[aã]o\s+paulo\b",
+        ],
+    ),
+    (
+        "Paris",
+        [
+            r"\bparis\b",
+        ],
+    ),
+    (
+        "Tokyo",
+        [
+            r"\btokyo\b",
+            r"\btōkyō\b",
+        ],
+    ),
 ]
 
 # Set of target hub names for fast lookup

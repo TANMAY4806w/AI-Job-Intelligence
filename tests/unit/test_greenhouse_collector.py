@@ -32,7 +32,7 @@ from app.orchestration.ingestion_service import (
     JobIngestionService,
 )
 from app.persistence.models.company import Company
-from app.persistence.models.source import CompanySource
+from app.persistence.models.source import CompanySource, Source
 
 SAMPLE_LISTING_RESPONSE = {
     "jobs": [
@@ -221,6 +221,20 @@ async def test_successful_board_collection_and_envelope_creation(
         assert env1.extracted_data["posted_at"] == "2026-02-15T10:00:00Z"
         assert env1.raw_payload["updated_at"] == "2026-03-01T12:00:00Z"
         assert env1.raw_payload["first_published"] == "2026-02-15T10:00:00Z"
+
+        # Verify verification evidence attached to envelope
+        assert env1.verification_evidence is not None
+        assert env1.verification_evidence.source_id == mock_company_source.source_id
+        assert env1.verification_evidence.payload_format_valid is True
+        assert env1.verification_evidence.http_status_code == 200
+        assert env1.verification_evidence.is_page_active is True
+        assert env1.verification_evidence.is_source_approved is None
+        assert (
+            env1.verification_evidence.application_url
+            == "https://boards.greenhouse.io/acme/jobs/101"
+        )
+        assert env1.verification_evidence.application_url_status is None
+        assert env1.verification_evidence.application_url_reachable is None
 
         # Verify Envelope 2 (Job 102)
         env2 = envelopes[1]
@@ -729,6 +743,8 @@ async def test_missing_first_published_remains_missing_even_with_updated_at(
 
         # 1. Extracted posted_at is None (unresolved), NOT updated_at or collected_at
         assert env.extracted_data["posted_at"] is None
+        assert env.verification_evidence is not None
+        assert env.verification_evidence.posted_at is None
 
         # 2. Raw evidence preserves updated_at as-is
         assert env.raw_payload["updated_at"] == updated_str
@@ -779,6 +795,8 @@ async def test_invalid_first_published_does_not_fall_back_to_updated_at(
 
         # 1. Extracted posted_at is None (left unresolved rather than falling back)
         assert env.extracted_data["posted_at"] is None
+        assert env.verification_evidence is not None
+        assert env.verification_evidence.posted_at is None
 
         # 2. Raw evidence preserves original malformed string for auditability
         assert env.raw_payload["first_published"] == "not-a-valid-timestamp-value"
@@ -832,3 +850,252 @@ async def test_original_response_bytes_and_source_evidence_remain_unchanged(
         assert env.raw_payload == job_detail_dict
         assert env.raw_payload["first_published"] == "2026-02-14T12:00:00Z"
         assert env.raw_payload["updated_at"] == "2026-03-01T18:00:00Z"
+
+
+@pytest.mark.asyncio
+async def test_verification_evidence_with_active_supported_source(
+    mock_company: Company,
+    mock_company_source: CompanySource,
+    mock_ingestion_service: MagicMock,
+) -> None:
+    """Verify collector sets is_source_approved=True when an active supported Source is provided."""
+    source = Source(
+        id=mock_company_source.source_id,
+        source_name="Greenhouse",
+        source_type="ATS",
+        is_active=True,
+    )
+    mock_company_source.is_active = True
+
+    raw_listing_bytes = json.dumps({"jobs": [{"id": 601}]}).encode("utf-8")
+    raw_detail_bytes = json.dumps(
+        {
+            "id": 601,
+            "title": "Engineer",
+            "absolute_url": "https://boards.greenhouse.io/acme/jobs/601",
+        }
+    ).encode("utf-8")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if "jobs?content=true" in str(request.url):
+            return httpx.Response(200, content=raw_listing_bytes)
+        return httpx.Response(200, content=raw_detail_bytes)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        collector = GreenhouseCollector(
+            mock_ingestion_service, http_client=PoliteHttpClient(client=client)
+        )
+        result = await collector.collect_company(mock_company_source, mock_company, source=source)
+        assert result.status == STATUS_SUCCESS
+
+        env: JobIngestionEnvelope = mock_ingestion_service.ingest.call_args.args[0]
+        assert env.verification_evidence is not None
+        assert env.verification_evidence.is_source_approved is True
+        assert env.verification_evidence.source_id == source.id
+        assert (
+            env.verification_evidence.application_url
+            == "https://boards.greenhouse.io/acme/jobs/601"
+        )
+
+
+@pytest.mark.asyncio
+async def test_verification_evidence_with_inactive_source(
+    mock_company: Company,
+    mock_company_source: CompanySource,
+    mock_ingestion_service: MagicMock,
+) -> None:
+    """Verify collector sets is_source_approved=False when source is inactive."""
+    source = Source(
+        id=mock_company_source.source_id,
+        source_name="Greenhouse",
+        source_type="ATS",
+        is_active=False,
+    )
+
+    raw_listing_bytes = json.dumps({"jobs": [{"id": 602}]}).encode("utf-8")
+    raw_detail_bytes = json.dumps(
+        {
+            "id": 602,
+            "title": "Engineer",
+            "absolute_url": "https://boards.greenhouse.io/acme/jobs/602",
+        }
+    ).encode("utf-8")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if "jobs?content=true" in str(request.url):
+            return httpx.Response(200, content=raw_listing_bytes)
+        return httpx.Response(200, content=raw_detail_bytes)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        collector = GreenhouseCollector(
+            mock_ingestion_service, http_client=PoliteHttpClient(client=client)
+        )
+        result = await collector.collect_company(mock_company_source, mock_company, source=source)
+        assert result.status == STATUS_SUCCESS
+
+        env: JobIngestionEnvelope = mock_ingestion_service.ingest.call_args.args[0]
+        assert env.verification_evidence is not None
+        assert env.verification_evidence.is_source_approved is False
+
+
+@pytest.mark.asyncio
+async def test_verification_evidence_with_unsupported_source_type(
+    mock_company: Company,
+    mock_company_source: CompanySource,
+    mock_ingestion_service: MagicMock,
+) -> None:
+    """Verify collector sets is_source_approved=False when source type is unrecognized/unsupported."""
+    source = Source(
+        id=mock_company_source.source_id,
+        source_name="UntrustedScraper",
+        source_type="UNVERIFIED_WEB",
+        is_active=True,
+    )
+
+    raw_listing_bytes = json.dumps({"jobs": [{"id": 603}]}).encode("utf-8")
+    raw_detail_bytes = json.dumps(
+        {
+            "id": 603,
+            "title": "Engineer",
+            "absolute_url": "https://boards.greenhouse.io/acme/jobs/603",
+        }
+    ).encode("utf-8")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if "jobs?content=true" in str(request.url):
+            return httpx.Response(200, content=raw_listing_bytes)
+        return httpx.Response(200, content=raw_detail_bytes)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        collector = GreenhouseCollector(
+            mock_ingestion_service, http_client=PoliteHttpClient(client=client)
+        )
+        result = await collector.collect_company(mock_company_source, mock_company, source=source)
+        assert result.status == STATUS_SUCCESS
+
+        env: JobIngestionEnvelope = mock_ingestion_service.ingest.call_args.args[0]
+        assert env.verification_evidence is not None
+        assert env.verification_evidence.is_source_approved is False
+
+
+@pytest.mark.asyncio
+async def test_verification_evidence_without_source_unresolved(
+    mock_company: Company,
+    mock_company_source: CompanySource,
+    mock_ingestion_service: MagicMock,
+) -> None:
+    """Verify collector sets is_source_approved=None when source is not resolved."""
+    mock_company_source.source = None  # type: ignore[assignment]
+
+    raw_listing_bytes = json.dumps({"jobs": [{"id": 604}]}).encode("utf-8")
+    raw_detail_bytes = json.dumps(
+        {
+            "id": 604,
+            "title": "Engineer",
+            "absolute_url": "https://boards.greenhouse.io/acme/jobs/604",
+        }
+    ).encode("utf-8")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if "jobs?content=true" in str(request.url):
+            return httpx.Response(200, content=raw_listing_bytes)
+        return httpx.Response(200, content=raw_detail_bytes)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        collector = GreenhouseCollector(
+            mock_ingestion_service, http_client=PoliteHttpClient(client=client)
+        )
+        result = await collector.collect_company(mock_company_source, mock_company, source=None)
+        assert result.status == STATUS_SUCCESS
+
+        env: JobIngestionEnvelope = mock_ingestion_service.ingest.call_args.args[0]
+        assert env.verification_evidence is not None
+        assert env.verification_evidence.is_source_approved is None
+
+
+@pytest.mark.asyncio
+async def test_verification_evidence_with_generic_ats_type_unapproved(
+    mock_company: Company,
+    mock_company_source: CompanySource,
+    mock_ingestion_service: MagicMock,
+) -> None:
+    """Verify collector sets is_source_approved=False when source has generic ATS type but unapproved name."""
+    source = Source(
+        id=mock_company_source.source_id,
+        source_name="GenericCustomATS",
+        source_type="ATS_API",
+        is_active=True,
+    )
+    mock_company_source.is_active = True
+
+    raw_listing_bytes = json.dumps({"jobs": [{"id": 605}]}).encode("utf-8")
+    raw_detail_bytes = json.dumps(
+        {
+            "id": 605,
+            "title": "Engineer",
+            "absolute_url": "https://boards.greenhouse.io/acme/jobs/605",
+        }
+    ).encode("utf-8")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if "jobs?content=true" in str(request.url):
+            return httpx.Response(200, content=raw_listing_bytes)
+        return httpx.Response(200, content=raw_detail_bytes)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        collector = GreenhouseCollector(
+            mock_ingestion_service, http_client=PoliteHttpClient(client=client)
+        )
+        result = await collector.collect_company(mock_company_source, mock_company, source=source)
+        assert result.status == STATUS_SUCCESS
+
+        env: JobIngestionEnvelope = mock_ingestion_service.ingest.call_args.args[0]
+        assert env.verification_evidence is not None
+        assert env.verification_evidence.is_source_approved is False
+
+
+@pytest.mark.asyncio
+async def test_verification_evidence_with_inactive_company_source_mapping(
+    mock_company: Company,
+    mock_company_source: CompanySource,
+    mock_ingestion_service: MagicMock,
+) -> None:
+    """Verify collector sets is_source_approved=False when company_source mapping is inactive."""
+    source = Source(
+        id=mock_company_source.source_id,
+        source_name="Greenhouse",
+        source_type="ATS_API",
+        is_active=True,
+    )
+    mock_company_source.is_active = False
+
+    raw_listing_bytes = json.dumps({"jobs": [{"id": 606}]}).encode("utf-8")
+    raw_detail_bytes = json.dumps(
+        {
+            "id": 606,
+            "title": "Engineer",
+            "absolute_url": "https://boards.greenhouse.io/acme/jobs/606",
+        }
+    ).encode("utf-8")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if "jobs?content=true" in str(request.url):
+            return httpx.Response(200, content=raw_listing_bytes)
+        return httpx.Response(200, content=raw_detail_bytes)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        collector = GreenhouseCollector(
+            mock_ingestion_service, http_client=PoliteHttpClient(client=client)
+        )
+        result = await collector.collect_company(mock_company_source, mock_company, source=source)
+        assert result.status == STATUS_SUCCESS
+
+        env: JobIngestionEnvelope = mock_ingestion_service.ingest.call_args.args[0]
+        assert env.verification_evidence is not None
+        assert env.verification_evidence.is_source_approved is False

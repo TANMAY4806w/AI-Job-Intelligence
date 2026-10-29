@@ -131,6 +131,14 @@ class TestLocationNormalization:
             ("Trivandrum", "Kochi"),
             ("Indore, Madhya Pradesh", "Indore"),
             ("Coimbatore, Tamil Nadu", "Coimbatore"),
+            ("Tel Aviv, Israel", "Tel Aviv"),
+            ("Tel-Aviv", "Tel Aviv"),
+            ("TLV, Israel", "Tel Aviv"),
+            ("São Paulo, Brazil", "São Paulo"),
+            ("Sao Paulo, Brazil", "São Paulo"),
+            ("Paris, France", "Paris"),
+            ("Tokyo, Japan", "Tokyo"),
+            ("Tōkyō, Japan", "Tokyo"),
         ],
     )
     def test_known_non_target_cities_resolution(self, input_loc: str, expected_city: str) -> None:
@@ -193,6 +201,21 @@ class TestLocationNormalization:
         assert cleaned2 == "Bengaluru (Work from Home)"
         assert normalized2 == "Bengaluru"
         assert remote_hint2 == "REMOTE"
+
+    def test_description_foreign_cities_do_not_leak_into_location_normalization(self) -> None:
+        """Verify that mentioning foreign cities in JD text does not pollute location normalization."""
+        service = JobNormalizationService()
+        payload = {
+            "title": "AI Engineer",
+            "description": (
+                "Our global team spans Paris, Tokyo, and Tel Aviv. "
+                "However, this role is strictly on-site in Bengaluru, India."
+            ),
+            "location": "Bengaluru, India",
+        }
+        res = service.normalize(payload)
+        assert res.normalized_location == "Bengaluru"
+        assert res.title == "AI Engineer"
 
 
 class TestUrlNormalization:

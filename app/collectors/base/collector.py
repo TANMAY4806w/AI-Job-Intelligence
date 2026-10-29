@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.collectors.base.http import PoliteHttpClient
 from app.persistence.models.company import Company
-from app.persistence.models.source import CompanySource
+from app.persistence.models.source import CompanySource, Source
 
 if TYPE_CHECKING:
     from app.orchestration.ingestion_service import JobIngestionService
@@ -159,6 +159,7 @@ class BaseCollector(ABC):
         self,
         company_source: CompanySource,
         company: Company | None = None,
+        source: Source | None = None,
         *,
         collection_run_id: uuid.UUID | None = None,
     ) -> CollectorResult:
@@ -167,6 +168,7 @@ class BaseCollector(ABC):
         Args:
             company_source: Configured CompanySource mapping with ATS identifier.
             company: Associated Company entity (if omitted, extracted from company_source.company).
+            source: Associated Source catalog entity (if omitted, extracted from company_source.source).
             collection_run_id: Optional collection run context UUID.
 
         Returns:

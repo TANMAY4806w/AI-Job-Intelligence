@@ -29,11 +29,9 @@ from app.verification.schemas import (
     JobVerificationResult,
 )
 
-# Supported / approved ATS platforms and direct sources
-APPROVED_SOURCE_TYPES: frozenset[str] = frozenset(
+# Specific recognized source platform identities per DATABASE_SCHEMA_V1.md & VERIFICATION_V1.md
+APPROVED_SOURCE_PLATFORMS: frozenset[str] = frozenset(
     {
-        "ats",
-        "direct",
         "greenhouse",
         "lever",
         "ashby",
@@ -41,9 +39,12 @@ APPROVED_SOURCE_TYPES: frozenset[str] = frozenset(
         "smartrecruiters",
         "jobvite",
         "taleo",
+        "career_page",
         "company_career_page",
     }
 )
+# Alias for backwards compatibility referencing the approved platform set
+APPROVED_SOURCE_TYPES: frozenset[str] = APPROVED_SOURCE_PLATFORMS
 
 # Approved P1 tech hubs per rules/JOB_FILTERS_V1.md Section 5.1
 CANONICAL_P1_HUBS: frozenset[str] = frozenset(
@@ -371,15 +372,11 @@ class JobVerificationEvaluator:
                 details=details,
             )
 
-        # 3. Check approved source name or source type registry
+        # 3. Check approved specific source platform name in registry
+        # A generic channel category (e.g. ATS_API, DIRECT_PORTAL) does not establish platform trust.
         name = (input_data.source_name or "").strip().lower()
-        stype = (input_data.source_type or "").strip().lower()
 
-        if (
-            name in APPROVED_SOURCE_TYPES
-            or stype in APPROVED_SOURCE_TYPES
-            or input_data.source_id is not None
-        ):
+        if name in APPROVED_SOURCE_PLATFORMS:
             details["approval_method"] = "registry_lookup"
             return DimensionResult(
                 dimension_name="source_validity",
@@ -478,7 +475,15 @@ class JobVerificationEvaluator:
     # Dimension 3: Application URL Validity
     # -----------------------------------------------------------------------
     def _evaluate_application_url(self, input_data: JobVerificationInput) -> DimensionResult:
-        """Evaluate reachability and syntactic validity of application URL and fallback."""
+        """Evaluate reachability and syntactic validity of application URL and fallback.
+
+        Semantic rules (Dimension 3):
+        - A URL is verified (verified=True, score=1.00) only when confirmed accessible via probe.
+        - A valid HTTPS URL that has not been probed (reachability untested) remains unverified
+          (verified=False, score=0.00), but is NOT broken; it does not receive APPLICATION_LINK_BROKEN.
+        - A URL is broken if missing, syntactically invalid/malformed, or explicitly failed probe.
+        - If primary is broken, check fallback source_url. If both are broken/missing, flag APPLICATION_LINK_BROKEN.
+        """
         weight = Decimal("0.00")
         review_reasons: list[str] = []
         details: dict[str, Any] = {
@@ -490,14 +495,12 @@ class JobVerificationEvaluator:
             "source_url_reachable": input_data.source_url_reachable,
         }
 
-        # Check primary application URL
-        app_url_valid = _is_url_accessible(
+        # 1. Primary application URL is confirmed accessible
+        if _is_url_accessible(
             input_data.application_url,
             input_data.application_url_status,
             input_data.application_url_reachable,
-        )
-
-        if app_url_valid:
+        ):
             details["primary_url_status"] = "accessible_and_valid"
             return DimensionResult(
                 dimension_name="application_url_validity",
@@ -509,17 +512,16 @@ class JobVerificationEvaluator:
                 details=details,
             )
 
-        # Primary application URL failed or is missing; evaluate fallback to source_url
-        details["primary_url_status"] = "unverified_or_invalid"
-        source_url_accessible = _is_url_accessible(
-            input_data.source_url,
-            input_data.source_url_status,
-            input_data.source_url_reachable,
+        # 2. Primary application URL is syntactically valid HTTPS, but reachability is unprobed
+        is_primary_valid_syntax = _is_valid_https_url(input_data.application_url)
+        is_primary_untested = (
+            is_primary_valid_syntax
+            and input_data.application_url_status is None
+            and input_data.application_url_reachable is None
         )
 
-        if source_url_accessible:
-            details["fallback_source_url_status"] = "fallback_accessible"
-            # Fallback is available, so do not route to APPLICATION_LINK_BROKEN
+        if is_primary_untested:
+            details["primary_url_status"] = "unprobed_syntax_valid"
             return DimensionResult(
                 dimension_name="application_url_validity",
                 verified=False,
@@ -530,7 +532,45 @@ class JobVerificationEvaluator:
                 details=details,
             )
 
-        # Both primary and fallback are missing or broken
+        # 3. Primary application URL is broken, missing, or confirmed unreachable. Evaluate fallback.
+        details["primary_url_status"] = "broken_or_invalid"
+
+        if _is_url_accessible(
+            input_data.source_url,
+            input_data.source_url_status,
+            input_data.source_url_reachable,
+        ):
+            details["fallback_source_url_status"] = "fallback_accessible"
+            return DimensionResult(
+                dimension_name="application_url_validity",
+                verified=False,
+                weight=weight,
+                score=Decimal("0.00"),
+                failure_reasons=[],
+                review_reasons=[],
+                details=details,
+            )
+
+        is_fallback_valid_syntax = _is_valid_https_url(input_data.source_url)
+        is_fallback_untested = (
+            is_fallback_valid_syntax
+            and input_data.source_url_status is None
+            and input_data.source_url_reachable is None
+        )
+
+        if is_fallback_untested:
+            details["fallback_source_url_status"] = "fallback_unprobed_syntax_valid"
+            return DimensionResult(
+                dimension_name="application_url_validity",
+                verified=False,
+                weight=weight,
+                score=Decimal("0.00"),
+                failure_reasons=[],
+                review_reasons=[],
+                details=details,
+            )
+
+        # 4. Both primary and fallback are missing, malformed, or confirmed broken
         review_reasons.append(REVIEW_APPLICATION_LINK_BROKEN)
         details["fallback_source_url_status"] = "fallback_broken_or_absent"
         return DimensionResult(

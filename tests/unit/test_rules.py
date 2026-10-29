@@ -299,6 +299,13 @@ class TestLocationRules:
             "Ahmedabad, Gujarat",
             "London, UK",
             "Austin, Texas",
+            "Tel Aviv, Israel",
+            "Tel-Aviv",
+            "São Paulo, Brazil",
+            "Sao Paulo, Brazil",
+            "Paris, France",
+            "Tokyo, Japan",
+            "Tōkyō, Japan",
         ],
     )
     def test_unlisted_on_site_locations_rejected(self, unlisted_loc: str):
@@ -328,6 +335,38 @@ class TestLocationRules:
         res = evaluate_job_filter(job, reference_time=T_REF)
         assert res.eligibility_status == "REVIEW"
         assert res.review_reason == REVIEW_LOCATION_AMBIGUOUS
+
+    @pytest.mark.parametrize(
+        "foreign_loc",
+        [
+            "Tel Aviv, Israel",
+            "São Paulo, Brazil",
+            "Sao Paulo, Brazil",
+            "Paris, France",
+            "Tokyo, Japan",
+        ],
+    )
+    def test_remote_foreign_cities_route_to_review(self, foreign_loc: str):
+        job = _make_input(
+            location=foreign_loc,
+            normalized_location=None,
+            remote_type="REMOTE",
+        )
+        res = evaluate_job_filter(job, reference_time=T_REF)
+        assert res.eligibility_status == "REVIEW"
+        assert res.review_reason == REVIEW_LOCATION_REMOTE_REVIEW
+        assert REVIEW_LOCATION_REMOTE_REVIEW in res.reason_codes
+
+    def test_foreign_city_in_jd_does_not_reject_target_hub_job(self):
+        job = _make_input(
+            location="Bengaluru, Karnataka",
+            normalized_location="Bengaluru",
+            description="Our company has offices in Paris, Tokyo, and Tel Aviv. This position is in Bengaluru.",
+            remote_type="ON_SITE",
+        )
+        res = evaluate_job_filter(job, reference_time=T_REF)
+        assert res.eligibility_status == "ELIGIBLE"
+        assert res.evaluation_context["location_tier"] == "P2"
 
 
 # ==============================================================================

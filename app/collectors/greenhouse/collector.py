@@ -38,7 +38,9 @@ from app.orchestration.ingestion_service import (
     JobIngestionService,
 )
 from app.persistence.models.company import Company
-from app.persistence.models.source import CompanySource
+from app.persistence.models.source import CompanySource, Source
+from app.verification.evaluator import APPROVED_SOURCE_TYPES
+from app.verification.schemas import JobVerificationInput
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +102,7 @@ class GreenhouseCollector(BaseCollector):
         self,
         company_source: CompanySource,
         company: Company | None = None,
+        source: Source | None = None,
         *,
         collection_run_id: uuid.UUID | None = None,
     ) -> CollectorResult:
@@ -108,6 +111,7 @@ class GreenhouseCollector(BaseCollector):
         Args:
             company_source: Configured CompanySource mapping with Greenhouse ats_identifier.
             company: Associated Company entity (if omitted, extracted from company_source.company).
+            source: Associated Source catalog entity (if omitted, extracted from company_source.source).
             collection_run_id: Optional collection run context UUID.
 
         Returns:
@@ -124,6 +128,28 @@ class GreenhouseCollector(BaseCollector):
             raise ValueError(
                 "Company entity must be provided or accessible on company_source.company."
             )
+
+        # 2. Resolve Source entity and derive explicit source approval from catalog
+        resolved_source = source or getattr(company_source, "source", None)
+        source_name: str | None = None
+        source_type: str | None = None
+        is_source_approved: bool | None = None
+
+        if resolved_source is not None:
+            source_name = resolved_source.source_name
+            source_type = resolved_source.source_type
+            s_name_clean = (source_name or "").strip().lower()
+            # Must match a specific recognized platform identity, NOT a generic channel category
+            is_supported_platform = s_name_clean in APPROVED_SOURCE_TYPES
+            # Source approval requires active configured catalog entry, active mapping, and recognized platform identity
+            if (
+                resolved_source.is_active
+                and getattr(company_source, "is_active", True)
+                and is_supported_platform
+            ):
+                is_source_approved = True
+            else:
+                is_source_approved = False
 
         # 2. Validate Board Token
         board_token = validate_board_token(company_source.ats_identifier)
@@ -355,6 +381,28 @@ class GreenhouseCollector(BaseCollector):
             # Extract publication timestamp string strictly from first_published
             posted_at_raw = self._extract_publication_date(job_detail)
 
+            collected_now = datetime.now(UTC)
+            posted_at_dt = parse_publication_date(posted_at_raw)
+
+            # Construct verified evidence observations from collector harvest
+            verification_evidence = JobVerificationInput(
+                source_id=company_source.source_id,
+                source_name=source_name,
+                source_type=source_type,
+                is_source_approved=is_source_approved,
+                payload_format_valid=True,
+                description=description_str,
+                http_status_code=detail_resp.status_code,
+                is_page_active=True,
+                application_url=app_url,
+                source_url=detail_url,
+                company_name=resolved_company.name,
+                company_id=resolved_company.id,
+                location=location_str,
+                posted_at=posted_at_dt,
+                collected_at=collected_now,
+            )
+
             envelope = JobIngestionEnvelope(
                 raw_body=raw_body,
                 raw_payload=job_detail,
@@ -367,7 +415,7 @@ class GreenhouseCollector(BaseCollector):
                 source_url=detail_url,
                 application_url=app_url,
                 payload_format="JSON",
-                collected_at=datetime.now(UTC),
+                collected_at=collected_now,
                 collection_run_id=collection_run_id,
                 http_status=detail_resp.status_code,
                 content_hash=hashlib.sha256(raw_body).hexdigest(),
@@ -378,6 +426,7 @@ class GreenhouseCollector(BaseCollector):
                     "posted_at": posted_at_raw,
                     "application_url": app_url,
                 },
+                verification_evidence=verification_evidence,
             )
 
             # Pass envelope to JobIngestionService

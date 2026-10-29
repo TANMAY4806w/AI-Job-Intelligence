@@ -185,7 +185,8 @@ def evaluate_location(
     # (e.g., London, New York, Singapore, Austin, Berlin, etc.)
     _FOREIGN_OR_OTHER_CITY = re.compile(
         r"\b(?:london|new\s+york|san\s+francisco|seattle|austin|singapore|berlin|sydney|"
-        r"toronto|dubai|chennai|noida|gurgaon|delhi|kolkata|ahmedabad|jaipur|chandigarh)\b",
+        r"toronto|dubai|chennai|noida|gurgaon|delhi|kolkata|ahmedabad|jaipur|chandigarh|"
+        r"tel\s+aviv|tel-aviv|tlv|s[aã]o\s+paulo|sao\s+paulo|paris|tokyo|tōkyō)\b",
         re.IGNORECASE,
     )
     if _FOREIGN_OR_OTHER_CITY.search(clean_raw):

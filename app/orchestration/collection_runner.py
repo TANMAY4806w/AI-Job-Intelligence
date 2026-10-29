@@ -530,6 +530,8 @@ class CollectionRunner:
         collection_run = await self.collection_run_repo.create(collection_run)
 
         # 9. Execute collector harvest
+        if not getattr(resolved_cs, "source", None):
+            resolved_cs.source = resolved_source
         try:
             collector_result = await collector.collect_company(
                 company_source=resolved_cs,

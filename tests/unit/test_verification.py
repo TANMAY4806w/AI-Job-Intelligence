@@ -170,6 +170,58 @@ class TestSourceValidityDimension:
         assert result.passed is False
         assert FAILURE_SOURCE_INVALID in result.failure_reasons
 
+    def test_source_id_alone_does_not_approve_unrecognized_source(
+        self, evaluator: JobVerificationEvaluator, base_valid_input: JobVerificationInput
+    ):
+        inp = base_valid_input.model_copy(
+            update={
+                "source_id": uuid.uuid4(),
+                "source_name": "sketchy_scraper_xyz",
+                "source_type": "UNKNOWN",
+                "is_source_approved": None,
+            }
+        )
+        result = evaluator.evaluate(inp)
+        assert result.source_verified is False
+        assert FAILURE_SOURCE_INVALID in result.failure_reasons
+
+    def test_generic_ats_type_does_not_approve_unrecognized_platform(
+        self, evaluator: JobVerificationEvaluator, base_valid_input: JobVerificationInput
+    ):
+        """Verify that generic source_type 'ATS' or 'ATS_API' does not approve an unrecognized platform."""
+        inp = base_valid_input.model_copy(
+            update={
+                "source_name": "arbitrary_custom_ats",
+                "source_type": "ATS_API",
+                "is_source_approved": None,
+            }
+        )
+        result = evaluator.evaluate(inp)
+        assert result.source_verified is False
+        assert result.passed is False
+        assert FAILURE_SOURCE_INVALID in result.failure_reasons
+        assert (
+            result.dimensions["source_validity"].details["failure_cause"]
+            == "unrecognized_source_platform"
+        )
+
+    def test_missing_source_evidence_fails_verification(
+        self, evaluator: JobVerificationEvaluator, base_valid_input: JobVerificationInput
+    ):
+        """Verify that completely missing source identity fails source verification."""
+        inp = base_valid_input.model_copy(
+            update={
+                "source_id": None,
+                "source_name": None,
+                "source_type": None,
+                "is_source_approved": None,
+            }
+        )
+        result = evaluator.evaluate(inp)
+        assert result.source_verified is False
+        assert result.passed is False
+        assert FAILURE_SOURCE_INVALID in result.failure_reasons
+
     def test_corrupted_payload_format(
         self, evaluator: JobVerificationEvaluator, base_valid_input: JobVerificationInput
     ):
@@ -300,6 +352,129 @@ class TestApplicationURLValidityDimension:
         assert REVIEW_APPLICATION_LINK_BROKEN in result.review_reasons
         # Does not fail critical passed check
         assert result.passed is True
+
+    def test_unprobed_valid_https_url_remains_unverified_without_broken_flag(
+        self, evaluator: JobVerificationEvaluator, base_valid_input: JobVerificationInput
+    ):
+        inp = base_valid_input.model_copy(
+            update={
+                "application_url": "https://boards.greenhouse.io/jobs/1",
+                "application_url_status": None,
+                "application_url_reachable": None,
+                "source_url": None,
+            }
+        )
+        result = evaluator.evaluate(inp)
+        assert result.application_url_verified is False
+        assert (
+            result.review_reasons is None
+            or REVIEW_APPLICATION_LINK_BROKEN not in result.review_reasons
+        )
+        assert (
+            result.dimensions["application_url_validity"].details["primary_url_status"]
+            == "unprobed_syntax_valid"
+        )
+
+    def test_api_http_status_code_200_does_not_verify_unprobed_application_url(
+        self, evaluator: JobVerificationEvaluator, base_valid_input: JobVerificationInput
+    ):
+        """Regression test: verify that http_status_code=200 from Greenhouse job detail API
+        only verifies JD existence and does NOT make an unprobed application URL appear reachable.
+        """
+        inp = base_valid_input.model_copy(
+            update={
+                # Individual Greenhouse job detail API fetch was 200 OK
+                "http_status_code": 200,
+                "is_page_active": True,
+                # Application URL is unprobed (reachability evidence is absent)
+                "application_url": "https://boards.greenhouse.io/figma/jobs/401",
+                "application_url_status": None,
+                "application_url_reachable": None,
+                "source_url": None,
+            }
+        )
+        result = evaluator.evaluate(inp)
+
+        # 1. JD existence is verified by the 200 OK API response
+        assert result.jd_verified is True
+        assert result.dimensions["jd_existence"].score == Decimal("1.00")
+
+        # 2. Application URL MUST remain unverified (score 0.00, verified=False)
+        assert result.application_url_verified is False
+        assert result.dimensions["application_url_validity"].verified is False
+        assert result.dimensions["application_url_validity"].score == Decimal("0.00")
+        assert (
+            result.dimensions["application_url_validity"].details["primary_url_status"]
+            == "unprobed_syntax_valid"
+        )
+        assert (
+            result.review_reasons is None
+            or REVIEW_APPLICATION_LINK_BROKEN not in result.review_reasons
+        )
+
+        # 3. Conversely, when probed evidence is explicitly supplied, application URL is verified
+        inp_probed = inp.model_copy(
+            update={
+                "application_url_status": 200,
+                "application_url_reachable": True,
+            }
+        )
+        result_probed = evaluator.evaluate(inp_probed)
+        assert result_probed.application_url_verified is True
+        assert result_probed.dimensions["application_url_validity"].verified is True
+        assert result_probed.dimensions["application_url_validity"].score == Decimal("1.00")
+        assert (
+            result_probed.dimensions["application_url_validity"].details["primary_url_status"]
+            == "accessible_and_valid"
+        )
+
+    def test_malformed_url_routes_to_broken_when_no_fallback(
+        self, evaluator: JobVerificationEvaluator, base_valid_input: JobVerificationInput
+    ):
+        inp = base_valid_input.model_copy(
+            update={
+                "application_url": "not-a-valid-url",
+                "source_url": None,
+            }
+        )
+        result = evaluator.evaluate(inp)
+        assert result.application_url_verified is False
+        assert REVIEW_APPLICATION_LINK_BROKEN in result.review_reasons
+
+    def test_missing_urls_route_to_broken(
+        self, evaluator: JobVerificationEvaluator, base_valid_input: JobVerificationInput
+    ):
+        inp = base_valid_input.model_copy(
+            update={
+                "application_url": None,
+                "source_url": None,
+            }
+        )
+        result = evaluator.evaluate(inp)
+        assert result.application_url_verified is False
+        assert REVIEW_APPLICATION_LINK_BROKEN in result.review_reasons
+
+    def test_malformed_primary_with_unprobed_valid_fallback(
+        self, evaluator: JobVerificationEvaluator, base_valid_input: JobVerificationInput
+    ):
+        inp = base_valid_input.model_copy(
+            update={
+                "application_url": "not-a-valid-url",
+                "source_url": "https://company.com/careers/jobs/1",
+                "source_url_status": None,
+                "source_url_reachable": None,
+            }
+        )
+        result = evaluator.evaluate(inp)
+        assert result.application_url_verified is False
+        assert (
+            result.review_reasons is None
+            or REVIEW_APPLICATION_LINK_BROKEN not in result.review_reasons
+        )
+        assert (
+            result.dimensions["application_url_validity"].details["fallback_source_url_status"]
+            == "fallback_unprobed_syntax_valid"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -64,6 +64,8 @@ class JobReevaluationComparison(BaseModel):
     persisted_status: str
     persisted_rejection_reason: str | None = None
     persisted_review_reason: str | None = None
+    persisted_role_priority: str | None = None
+    persisted_relevance_status: str | None = None
     persisted_verification_confidence: Decimal
     persisted_verified: bool
     persisted_dimension_flags: dict[str, bool]
@@ -72,6 +74,8 @@ class JobReevaluationComparison(BaseModel):
     proposed_status: str
     proposed_rejection_reason: str | None = None
     proposed_review_reason: str | None = None
+    proposed_role_priority: str | None = None
+    proposed_relevance_status: str | None = None
     proposed_verification_confidence: Decimal
     proposed_verified: bool
     proposed_dimension_flags: dict[str, bool]
@@ -162,6 +166,8 @@ class ReevaluationReport(BaseModel):
                         "status": comp.persisted_status,
                         "rejection_reason": comp.persisted_rejection_reason,
                         "review_reason": comp.persisted_review_reason,
+                        "role_priority": comp.persisted_role_priority,
+                        "relevance_status": comp.persisted_relevance_status,
                         "confidence": float(comp.persisted_verification_confidence),
                         "verified": comp.persisted_verified,
                         "dimension_flags": comp.persisted_dimension_flags,
@@ -170,6 +176,8 @@ class ReevaluationReport(BaseModel):
                         "status": comp.proposed_status,
                         "rejection_reason": comp.proposed_rejection_reason,
                         "review_reason": comp.proposed_review_reason,
+                        "role_priority": comp.proposed_role_priority,
+                        "relevance_status": comp.proposed_relevance_status,
                         "confidence": float(comp.proposed_verification_confidence),
                         "verified": comp.proposed_verified,
                         "dimension_flags": comp.proposed_dimension_flags,
@@ -352,12 +360,26 @@ class JobReevaluationService:
         pers_status = job.eligibility_status
         pers_rej_reason = job.rejection_reason
         pers_rev_reason = job.review_reason
+        pers_role_priority = (
+            job.role_priority if isinstance(getattr(job, "role_priority", None), str) else None
+        )
+        pers_relevance_status = (
+            job.relevance_status
+            if isinstance(getattr(job, "relevance_status", None), str)
+            else None
+        )
         pers_conf = Decimal(str(job.verification_confidence))
         pers_verified = bool(job.jd_verified and job.source_verified)
 
         prop_status = f_result.eligibility_status
         prop_rej_reason = f_result.rejection_reason
         prop_rev_reason = f_result.review_reason
+        prop_role_priority = (
+            str(f_result.role_priority) if f_result.role_priority is not None else None
+        )
+        prop_relevance_status = (
+            str(f_result.relevance_status) if f_result.relevance_status is not None else None
+        )
         prop_conf = v_result.verification_confidence
         prop_verified = v_result.passed
 
@@ -399,12 +421,16 @@ class JobReevaluationService:
             persisted_status=pers_status,
             persisted_rejection_reason=pers_rej_reason,
             persisted_review_reason=pers_rev_reason,
+            persisted_role_priority=pers_role_priority,
+            persisted_relevance_status=pers_relevance_status,
             persisted_verification_confidence=pers_conf,
             persisted_verified=pers_verified,
             persisted_dimension_flags=pers_flags,
             proposed_status=prop_status,
             proposed_rejection_reason=prop_rej_reason,
             proposed_review_reason=prop_rev_reason,
+            proposed_role_priority=prop_role_priority,
+            proposed_relevance_status=prop_relevance_status,
             proposed_verification_confidence=prop_conf,
             proposed_verified=prop_verified,
             proposed_dimension_flags=prop_flags,

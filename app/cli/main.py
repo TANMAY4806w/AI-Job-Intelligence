@@ -15,6 +15,7 @@ from app.cli.greenhouse import (
     onboard_greenhouse_mapping,
 )
 from app.cli.reevaluate import execute_dry_run_reevaluation
+from app.cli.refresh import execute_refresh_workflow
 from app.persistence.repositories.company_repository import CompanyRepository
 from app.persistence.repositories.company_source_repository import CompanySourceRepository
 from app.persistence.repositories.source_repository import SourceRepository
@@ -190,6 +191,59 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Optional maximum number of jobs to re-evaluate",
+    )
+
+    # =========================================================================
+    # Refresh Subcommand (Controlled Persistence Refresh)
+    # =========================================================================
+    refresh_parser = subparsers.add_parser(
+        "refresh",
+        help="Controlled persistence refresh of verification and eligibility rules",
+        description="Apply approved re-evaluation results to canonical jobs and append audit records.",
+    )
+    refresh_parser.add_argument(
+        "-c",
+        "--company-name",
+        type=str,
+        help="Hiring organization name (e.g. 'Figma')",
+    )
+    refresh_parser.add_argument(
+        "-i",
+        "--company-id",
+        type=str,
+        help="Company UUID in database",
+    )
+    refresh_parser.add_argument(
+        "--preview",
+        action="store_true",
+        default=True,
+        help="Preview changes without modifying database (default: True)",
+    )
+    refresh_parser.add_argument(
+        "--apply",
+        dest="apply",
+        action="store_true",
+        default=False,
+        help="Execute transactional persistence of updated rules and audit records",
+    )
+    refresh_parser.add_argument(
+        "--target-database",
+        type=str,
+        default=None,
+        help="Expected database name (required for --apply)",
+    )
+    refresh_parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output plan/result in JSON format",
+    )
+    refresh_parser.add_argument(
+        "-o",
+        "--output-file",
+        type=str,
+        default=None,
+        help="Optional file path to write JSON report",
     )
 
     return parser
@@ -393,6 +447,22 @@ async def _handle_reevaluate(args: argparse.Namespace) -> int:
         return exit_code
 
 
+async def _handle_refresh(args: argparse.Namespace) -> int:
+    """Handle 'refresh' command execution."""
+    async with session_scope() as session:
+        _, exit_code = await execute_refresh_workflow(
+            session=session,
+            company_name=args.company_name,
+            company_id=args.company_id,
+            preview=args.preview,
+            apply=args.apply,
+            target_database=args.target_database,
+            output_json=args.json,
+            output_file=args.output_file,
+        )
+        return exit_code
+
+
 async def async_main(args: argparse.Namespace) -> int:
     """Dispatch CLI arguments asynchronously to appropriate handler."""
     try:
@@ -411,6 +481,8 @@ async def async_main(args: argparse.Namespace) -> int:
                 return 2
         elif args.subcommand == "reevaluate":
             return await _handle_reevaluate(args)
+        elif args.subcommand == "refresh":
+            return await _handle_refresh(args)
         else:
             print(
                 "ERROR: Unrecognized subcommand. Use --help to view available commands.",

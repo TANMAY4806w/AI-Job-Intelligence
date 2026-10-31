@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import uuid
 
@@ -12,6 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.cli.reevaluate import format_table
 from app.orchestration.refresh_service import (
     ALLOWED_MUTATING_DATABASES,
+    DEV_AUTHORIZATION_TOKEN_ENV_VAR,
+    DEV_DATABASE_NAME,
+    EXPECTED_DEV_AUTHORIZATION_TOKEN,
     JobRefreshService,
     RefreshPlan,
     RefreshResult,
@@ -121,6 +125,7 @@ async def execute_refresh_workflow(
     preview: bool = True,
     apply: bool = False,
     target_database: str | None = None,
+    allow_database_override: str | None = None,
     output_json: bool = False,
     output_file: str | None = None,
 ) -> tuple[RefreshPlan | RefreshResult | None, int]:
@@ -179,9 +184,11 @@ async def execute_refresh_workflow(
         )
         return None, 2
 
-    # Restrict mutating refresh execution to allowlisted test database only
     target_db_norm = target_database.strip().lower()
-    if target_db_norm not in ALLOWED_MUTATING_DATABASES:
+    is_dev_target = target_db_norm == DEV_DATABASE_NAME
+
+    # Validate database allowlist / scoped override
+    if not is_dev_target and target_db_norm not in ALLOWED_MUTATING_DATABASES:
         print(
             f"FATAL ERROR: Mutating refresh is strictly restricted to allowlisted test database "
             f"{sorted(ALLOWED_MUTATING_DATABASES)}. Target database '{target_database}' is forbidden.",
@@ -189,16 +196,36 @@ async def execute_refresh_workflow(
         )
         return None, 2
 
+    if is_dev_target:
+        override_norm = (allow_database_override or "").strip().lower()
+        if override_norm != DEV_DATABASE_NAME:
+            print(
+                f"FATAL ERROR: Mutating refresh against '{DEV_DATABASE_NAME}' requires explicit authorization. "
+                f"Pass --allow-database-override {DEV_DATABASE_NAME} and set {DEV_AUTHORIZATION_TOKEN_ENV_VAR}.",
+                file=sys.stderr,
+            )
+            return None, 2
+
+        env_token = os.environ.get(DEV_AUTHORIZATION_TOKEN_ENV_VAR)
+        if env_token != EXPECTED_DEV_AUTHORIZATION_TOKEN:
+            print(
+                f"FATAL ERROR: Missing or invalid {DEV_AUTHORIZATION_TOKEN_ENV_VAR} environment variable. "
+                f"Refusing mutating execution against '{DEV_DATABASE_NAME}'.",
+                file=sys.stderr,
+            )
+            return None, 2
+
     try:
         result = await service.apply_refresh(
             session=session,
             company_id_or_name=target_identifier,
             expected_database=target_database.strip(),
             dry_run=False,
+            allow_database_override=allow_database_override,
         )
         # Commit transaction
         await session.commit()
-    except (ValueError, PermissionError) as err:
+    except (ValueError, PermissionError, RuntimeError) as err:
         await session.rollback()
         print(f"ERROR: {err}", file=sys.stderr)
         return None, 1
@@ -214,8 +241,16 @@ async def execute_refresh_workflow(
             with open(output_file, "w", encoding="utf-8") as f:
                 json.dump(result_dict, f, indent=2)
         except OSError as exc:
-            print(f"ERROR: Failed writing output file '{output_file}': {exc}", file=sys.stderr)
-            return None, 1
+            logger.warning(
+                "Refresh committed successfully to database, but writing output file '%s' failed: %s",
+                output_file,
+                exc,
+            )
+            print(
+                f"WARNING: Persistence refresh was successfully committed to the database, "
+                f"but writing output file '{output_file}' failed: {exc}",
+                file=sys.stderr,
+            )
 
     if output_json:
         print(json.dumps(result_dict, indent=2))

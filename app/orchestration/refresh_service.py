@@ -12,6 +12,7 @@ Strict safety:
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -43,8 +44,16 @@ from app.verification.evaluator import (
 )
 from app.verification.schemas import JobVerificationInput
 
-# Restrict mutating refresh execution to isolated test database only until explicitly authorized
+# Restrict mutating refresh execution to isolated test database only by default
 ALLOWED_MUTATING_DATABASES: frozenset[str] = frozenset({"job_intelligence_test"})
+
+# Scoped authorization parameters for controlled development database refresh
+DEV_DATABASE_NAME: str = "job_intelligence_dev"
+FIGMA_COMPANY_ID: uuid.UUID = uuid.UUID("4916b6da-2803-4a9e-b3ce-dd41ef2a5324")
+FIGMA_TEL_AVIV_JOB_ID: uuid.UUID = uuid.UUID("bdf7f339-da99-44e2-9b2d-fe4a7738f65d")
+# Fixed manual confirmation phrase (not a secret credential) required for dev override confirmation
+DEV_AUTHORIZATION_TOKEN_ENV_VAR: str = "FIGMA_REFRESH_AUTHORIZATION_TOKEN"
+EXPECTED_DEV_AUTHORIZATION_TOKEN: str = "AUTHORIZE_FIGMA_REFRESH_DEV_05377f2ddb14"
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +180,80 @@ class RefreshResult(BaseModel):
         }
 
 
+# Module-private sentinel protecting ScopedDevAuthorization against accidental construction
+_SCOPED_AUTH_SENTINEL = object()
+
+
+class ScopedDevAuthorization:
+    """Explicit, bound authorization proof issued strictly by JobRefreshService after all 6 gate checks pass.
+
+    Construction is restricted to JobRefreshService._authorize_development_refresh() via a module-private
+    sentinel token, protecting against accidental construction across module boundaries. This provides
+    architectural protection against bypass within the application, not a cryptographically unforgeable
+    capability.
+    """
+
+    def __init__(
+        self,
+        *,
+        company_id: uuid.UUID,
+        company_name: str,
+        database_name: str,
+        _private_token: object = None,
+    ) -> None:
+        """Private constructor: raises PermissionError if private sentinel is not supplied."""
+        if _private_token is not _SCOPED_AUTH_SENTINEL:
+            raise PermissionError(
+                "ScopedDevAuthorization cannot be constructed directly. "
+                "It must be issued by JobRefreshService._authorize_development_refresh()."
+            )
+        if company_id != FIGMA_COMPANY_ID:
+            raise PermissionError(
+                f"Scoped authorization company ID mismatch: expected {FIGMA_COMPANY_ID}, got {company_id}."
+            )
+        if database_name.strip().lower() != DEV_DATABASE_NAME:
+            raise PermissionError(
+                f"Scoped authorization database mismatch: expected '{DEV_DATABASE_NAME}', got '{database_name}'."
+            )
+        self._company_id = company_id
+        self._company_name = company_name
+        self._database_name = database_name.strip().lower()
+
+    @property
+    def company_id(self) -> uuid.UUID:
+        """Return the authorized company UUID."""
+        return self._company_id
+
+    @property
+    def company_name(self) -> str:
+        """Return the authorized company name."""
+        return self._company_name
+
+    @property
+    def database_name(self) -> str:
+        """Return the authorized database name."""
+        return self._database_name
+
+    def verify_authority(self, target_company_id: uuid.UUID, target_database: str) -> None:
+        """Verify that authorization token is strictly bound to the target company and database context."""
+        if self._company_id != FIGMA_COMPANY_ID or self._company_id != target_company_id:
+            raise PermissionError(
+                f"Scoped authorization context mismatch: token is bound to {self._company_id}, "
+                f"but target is {target_company_id}."
+            )
+        target_db_norm = target_database.strip().lower()
+        if self._database_name != DEV_DATABASE_NAME or self._database_name != target_db_norm:
+            raise PermissionError(
+                f"Scoped authorization context mismatch: token is bound to '{self._database_name}', "
+                f"but target is '{target_database}'."
+            )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ScopedDevAuthorization company_id={self._company_id} database={self._database_name}>"
+        )
+
+
 class JobRefreshService:
     """Orchestrates controlled persistence refresh of verification and filter decisions."""
 
@@ -189,6 +272,77 @@ class JobRefreshService:
             verification_evaluator or self.reevaluation_service.verification_evaluator
         )
         self.rule_engine = rule_engine or self.reevaluation_service.rule_engine
+
+    @classmethod
+    def _authorize_development_refresh(
+        cls,
+        *,
+        company: Company,
+        current_db: str,
+        expected_db: str,
+        allow_database_override: str | None,
+        authorization_token: str | None,
+    ) -> ScopedDevAuthorization:
+        """Evaluate all 6 scoped authorization checks and issue an authorized ScopedDevAuthorization token.
+
+        Raises PermissionError or ValueError if any check fails.
+        """
+        effective_token = authorization_token or os.environ.get(DEV_AUTHORIZATION_TOKEN_ENV_VAR)
+        override_norm = (allow_database_override or "").strip().lower()
+        current_db_norm = current_db.strip().lower()
+        expected_db_norm = expected_db.strip().lower()
+
+        # 1. Override flag
+        if override_norm != DEV_DATABASE_NAME:
+            raise PermissionError(
+                f"Mutating refresh execution is strictly restricted to allowlisted test database "
+                f"{sorted(ALLOWED_MUTATING_DATABASES)}. Execution against '{DEV_DATABASE_NAME}' "
+                f"is blocked without explicit override (allow_database_override='{DEV_DATABASE_NAME}')."
+            )
+
+        # 2. Confirmation phrase (manual confirmation phrase, not a secret credential)
+        if effective_token != EXPECTED_DEV_AUTHORIZATION_TOKEN:
+            raise PermissionError(
+                f"Mutating execution against '{DEV_DATABASE_NAME}' requires valid authorization token. "
+                f"Invalid or missing {DEV_AUTHORIZATION_TOKEN_ENV_VAR}."
+            )
+
+        # 3. Expected database
+        if expected_db_norm != DEV_DATABASE_NAME:
+            raise ValueError(
+                f"Database identity guard failed: target database specified as '{expected_db}', "
+                f"expected '{DEV_DATABASE_NAME}'."
+            )
+
+        # 4. Connected database
+        if current_db_norm != DEV_DATABASE_NAME:
+            raise ValueError(
+                f"Database identity guard failed: currently connected to '{current_db}', "
+                f"expected '{DEV_DATABASE_NAME}'."
+            )
+
+        # 5. Figma UUID
+        if company.id != FIGMA_COMPANY_ID:
+            raise PermissionError(
+                f"Scoped database override for '{DEV_DATABASE_NAME}' is strictly restricted to "
+                f"Figma (ID {FIGMA_COMPANY_ID}, slug 'figma'). "
+                f"Target was '{company.name}' ({company.id}). Refusing execution."
+            )
+
+        # 6. Figma slug
+        if company.normalized_name != "figma":
+            raise PermissionError(
+                f"Scoped database override for '{DEV_DATABASE_NAME}' is strictly restricted to "
+                f"Figma (ID {FIGMA_COMPANY_ID}, slug 'figma'). "
+                f"Target slug was '{company.normalized_name}'. Refusing execution."
+            )
+
+        return ScopedDevAuthorization(
+            company_id=company.id,
+            company_name=company.name,
+            database_name=current_db_norm,
+            _private_token=_SCOPED_AUTH_SENTINEL,
+        )
 
     async def get_current_database(self, session: AsyncSession) -> str:
         """Query and return the current PostgreSQL database name."""
@@ -382,40 +536,68 @@ class JobRefreshService:
         *,
         expected_database: str,
         dry_run: bool = False,
+        allow_database_override: str | None = None,
+        authorization_token: str | None = None,
     ) -> RefreshResult:
         """Apply approved re-evaluation results transactionally to canonical jobs and append audit rows.
 
         Strict Guards:
-        1. Refuses execution if current_database or expected_database is not in ALLOWED_MUTATING_DATABASES.
+        1. Refuses execution if target or connected database is not allowlisted ('job_intelligence_test').
+           Mutating execution against 'job_intelligence_dev' is strictly blocked unless ALL 6 scoped
+           authorization conditions are met:
+           - allow_database_override == 'job_intelligence_dev'
+           - valid FIGMA_REFRESH_AUTHORIZATION_TOKEN
+           - expected_database == 'job_intelligence_dev'
+           - connected database == 'job_intelligence_dev'
+           - target company ID == Figma UUID (4916b6da-2803-4a9e-b3ce-dd41ef2a5324)
+           - target company normalized_name == 'figma'
         2. Refuses execution if current_database != expected_database.
         3. Idempotently skips if plan.is_already_up_to_date is True.
-        4. Single transaction lifecycle: caller owns session commit/rollback.
+        4. Pre-commit invariant validation: asserts all status distributions and audit counts in-transaction.
+        5. Single transaction lifecycle: caller owns session commit/rollback.
         """
         current_db = await self.get_current_database(session)
         current_db_norm = current_db.strip().lower()
         expected_db_norm = expected_database.strip().lower()
 
-        # 1. Strict allowlist protection: only job_intelligence_test is allowed for mutating refresh
-        if current_db_norm not in ALLOWED_MUTATING_DATABASES:
-            raise PermissionError(
-                f"Mutating refresh execution is strictly restricted to allowlisted test database "
-                f"{sorted(ALLOWED_MUTATING_DATABASES)}. Currently connected to '{current_db}'. "
-                f"Execution against '{current_db}' (including 'job_intelligence_dev') is forbidden."
-            )
+        is_dev_override_requested = (
+            current_db_norm == DEV_DATABASE_NAME or expected_db_norm == DEV_DATABASE_NAME
+        )
 
-        if expected_db_norm not in ALLOWED_MUTATING_DATABASES:
-            raise PermissionError(
-                f"Mutating refresh execution is strictly restricted to allowlisted test database "
-                f"{sorted(ALLOWED_MUTATING_DATABASES)}. Target database was specified as "
-                f"'{expected_database}'. Refusing execution."
-            )
+        target_company: Company | None = None
+        dev_authorization: ScopedDevAuthorization | None = None
 
-        # 2. Database identity guard (must match connected database)
-        if current_db_norm != expected_db_norm:
-            raise ValueError(
-                f"Database identity guard failed: currently connected to '{current_db}', "
-                f"but expected_database was specified as '{expected_database}'. Refusing execution."
+        if is_dev_override_requested:
+            target_company = await self._resolve_company(session, company_id_or_name)
+            dev_authorization = self._authorize_development_refresh(
+                company=target_company,
+                current_db=current_db,
+                expected_db=expected_database,
+                allow_database_override=allow_database_override,
+                authorization_token=authorization_token,
             )
+        else:
+            # 1. Strict allowlist protection: only job_intelligence_test is allowed for mutating refresh
+            if current_db_norm not in ALLOWED_MUTATING_DATABASES:
+                raise PermissionError(
+                    f"Mutating refresh execution is strictly restricted to allowlisted test database "
+                    f"{sorted(ALLOWED_MUTATING_DATABASES)}. Currently connected to '{current_db}'. "
+                    f"Execution against '{current_db}' (including '{DEV_DATABASE_NAME}') is forbidden."
+                )
+
+            if expected_db_norm not in ALLOWED_MUTATING_DATABASES:
+                raise PermissionError(
+                    f"Mutating refresh execution is strictly restricted to allowlisted test database "
+                    f"{sorted(ALLOWED_MUTATING_DATABASES)}. Target database was specified as "
+                    f"'{expected_database}'. Refusing execution."
+                )
+
+            # 2. Database identity guard (must match connected database)
+            if current_db_norm != expected_db_norm:
+                raise ValueError(
+                    f"Database identity guard failed: currently connected to '{current_db}', "
+                    f"but expected_database was specified as '{expected_database}'. Refusing execution."
+                )
 
         # 3. Dry-run assertion
         if dry_run:
@@ -594,6 +776,18 @@ class JobRefreshService:
         # Flush dirty state to surface constraints without committing transaction
         await session.flush()
 
+        # In-transaction pre-commit invariant validation (atomic rollback if any check fails)
+        company = target_company or await self._resolve_company(session, company_id_or_name)
+        await self._validate_pre_commit_invariants(
+            session=session,
+            company=company,
+            plan=plan,
+            jobs_to_process=jobs_to_process,
+            now_utc=now_utc,
+            current_database=current_db,
+            dev_authorization=dev_authorization,
+        )
+
         return RefreshResult(
             company_id=plan.company_id,
             company_name=plan.company_name,
@@ -608,3 +802,161 @@ class JobRefreshService:
             refreshed_at=now_utc,
             plan=plan,
         )
+
+    async def _validate_pre_commit_invariants(
+        self,
+        session: AsyncSession,
+        company: Company,
+        plan: RefreshPlan,
+        jobs_to_process: Sequence[Job],
+        now_utc: datetime,
+        current_database: str | None = None,
+        dev_authorization: ScopedDevAuthorization | None = None,
+    ) -> None:
+        """Validate critical persistence invariants before committing transaction.
+
+        Generic invariants execute for all companies on any database.
+        Figma-specific assertions (138 jobs, 123/15 distribution, Tel Aviv attributes,
+        per-job audit counts) execute strictly for the authorized Figma refresh on 'job_intelligence_dev',
+        requiring an explicit ScopedDevAuthorization proof object (protected by private sentinel
+        against accidental construction).
+
+        Raises RuntimeError or PermissionError if any check fails, triggering transaction rollback.
+        """
+        # Generic pre-commit invariants for any company
+        if len(jobs_to_process) != plan.jobs_to_update:
+            raise RuntimeError(
+                f"Pre-commit invariant violation: processed {len(jobs_to_process)} jobs, "
+                f"expected {plan.jobs_to_update}."
+            )
+
+        for job in jobs_to_process:
+            if not job.eligibility_status:
+                raise RuntimeError(
+                    f"Pre-commit invariant violation: job {job.id} has null eligibility_status."
+                )
+            if job.verification_confidence is None:
+                raise RuntimeError(
+                    f"Pre-commit invariant violation: job {job.id} has null verification_confidence."
+                )
+            if job.updated_at != now_utc:
+                raise RuntimeError(
+                    f"Pre-commit invariant violation: job {job.id} updated_at was not updated."
+                )
+
+        # Scoped invariants for development database execution
+        active_db = (current_database or await self.get_current_database(session)).strip().lower()
+        is_dev_db = active_db == DEV_DATABASE_NAME
+
+        if is_dev_db:
+            # Under NO circumstances can dev invariants be evaluated without verified authorization proof
+            if dev_authorization is None:
+                raise PermissionError(
+                    f"Pre-commit invariants against '{DEV_DATABASE_NAME}' are forbidden without "
+                    "explicit ScopedDevAuthorization proof."
+                )
+            dev_authorization.verify_authority(
+                target_company_id=company.id,
+                target_database=active_db,
+            )
+
+            # 1. Total Figma canonical jobs must equal exactly 138
+            stmt_total = select(func.count(Job.id)).where(Job.company_id == FIGMA_COMPANY_ID)
+            total_figma_jobs = (await session.execute(stmt_total)).scalar()
+            if total_figma_jobs != 138:
+                raise RuntimeError(
+                    f"Pre-commit invariant violation: expected 138 Figma jobs, found {total_figma_jobs}."
+                )
+
+            # 2. Strict status and reason distribution: 123 EXCLUDED_ROLE, 15 LOCATION_NOT_ALLOWED, 0 REVIEW, 0 ELIGIBLE
+            stmt_dist = (
+                select(Job.eligibility_status, Job.rejection_reason, func.count(Job.id))
+                .where(Job.company_id == FIGMA_COMPANY_ID)
+                .group_by(Job.eligibility_status, Job.rejection_reason)
+            )
+            dist_res = (await session.execute(stmt_dist)).all()
+            dist_map = {(row[0], row[1]): row[2] for row in dist_res}
+
+            excluded_role_count = dist_map.get(("REJECTED", "EXCLUDED_ROLE"), 0)
+            location_not_allowed_count = dist_map.get(("REJECTED", "LOCATION_NOT_ALLOWED"), 0)
+
+            if excluded_role_count != 123:
+                raise RuntimeError(
+                    f"Pre-commit invariant violation: expected 123 REJECTED/EXCLUDED_ROLE jobs, found {excluded_role_count}."
+                )
+            if location_not_allowed_count != 15:
+                raise RuntimeError(
+                    f"Pre-commit invariant violation: expected 15 REJECTED/LOCATION_NOT_ALLOWED jobs, found {location_not_allowed_count}."
+                )
+
+            # Assert zero non-REJECTED jobs
+            stmt_non_rejected = select(func.count(Job.id)).where(
+                Job.company_id == FIGMA_COMPANY_ID,
+                Job.eligibility_status != "REJECTED",
+            )
+            non_rejected_count = (await session.execute(stmt_non_rejected)).scalar()
+            if non_rejected_count != 0:
+                raise RuntimeError(
+                    f"Pre-commit invariant violation: expected 0 non-REJECTED Figma jobs, found {non_rejected_count}."
+                )
+
+            # 3. Tel Aviv job specific inspection
+            tel_aviv_job = await session.get(Job, FIGMA_TEL_AVIV_JOB_ID)
+            if tel_aviv_job is None:
+                raise RuntimeError(
+                    f"Pre-commit invariant violation: Tel Aviv job {FIGMA_TEL_AVIV_JOB_ID} not found."
+                )
+            if tel_aviv_job.normalized_location != "Tel Aviv":
+                raise RuntimeError(
+                    f"Pre-commit invariant violation: Tel Aviv job normalized_location is "
+                    f"'{tel_aviv_job.normalized_location}', expected 'Tel Aviv'."
+                )
+            if tel_aviv_job.eligibility_status != "REJECTED":
+                raise RuntimeError(
+                    f"Pre-commit invariant violation: Tel Aviv job eligibility_status is "
+                    f"'{tel_aviv_job.eligibility_status}', expected 'REJECTED'."
+                )
+            if tel_aviv_job.rejection_reason != "LOCATION_NOT_ALLOWED":
+                raise RuntimeError(
+                    f"Pre-commit invariant violation: Tel Aviv job rejection_reason is "
+                    f"'{tel_aviv_job.rejection_reason}', expected 'LOCATION_NOT_ALLOWED'."
+                )
+            if not tel_aviv_job.source_verified:
+                raise RuntimeError(
+                    "Pre-commit invariant violation: Tel Aviv job source_verified is False, expected True."
+                )
+            if Decimal(str(tel_aviv_job.verification_confidence)) != Decimal("0.50"):
+                raise RuntimeError(
+                    f"Pre-commit invariant violation: Tel Aviv job verification_confidence is "
+                    f"{tel_aviv_job.verification_confidence}, expected 0.50."
+                )
+
+            # 4. Audit row count verification: every Figma job must have exactly 2 VerificationRecords and 2 FilterDecisions
+            # (1 original baseline + 1 newly inserted refresh record)
+            stmt_v_counts = (
+                select(VerificationRecord.job_id, func.count(VerificationRecord.id))
+                .join(Job, Job.id == VerificationRecord.job_id)
+                .where(Job.company_id == FIGMA_COMPANY_ID)
+                .group_by(VerificationRecord.job_id)
+            )
+            v_counts = {row[0]: row[1] for row in (await session.execute(stmt_v_counts)).all()}
+            if len(v_counts) != 138 or any(c != 2 for c in v_counts.values()):
+                bad_v = {jid: c for jid, c in v_counts.items() if c != 2}
+                raise RuntimeError(
+                    f"Pre-commit invariant violation: each of the 138 Figma jobs must have exactly 2 "
+                    f"VerificationRecords. Found mismatches in {len(bad_v)} jobs (total jobs with records: {len(v_counts)})."
+                )
+
+            stmt_f_counts = (
+                select(FilterDecision.job_id, func.count(FilterDecision.id))
+                .join(Job, Job.id == FilterDecision.job_id)
+                .where(Job.company_id == FIGMA_COMPANY_ID)
+                .group_by(FilterDecision.job_id)
+            )
+            f_counts = {row[0]: row[1] for row in (await session.execute(stmt_f_counts)).all()}
+            if len(f_counts) != 138 or any(c != 2 for c in f_counts.values()):
+                bad_f = {jid: c for jid, c in f_counts.items() if c != 2}
+                raise RuntimeError(
+                    f"Pre-commit invariant violation: each of the 138 Figma jobs must have exactly 2 "
+                    f"FilterDecisions. Found mismatches in {len(bad_f)} jobs (total jobs with decisions: {len(f_counts)})."
+                )

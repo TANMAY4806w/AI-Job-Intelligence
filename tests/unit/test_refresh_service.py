@@ -12,10 +12,16 @@ import pytest
 
 from app.orchestration.reevaluation_service import JobReevaluationComparison
 from app.orchestration.refresh_service import (
+    DEV_AUTHORIZATION_TOKEN_ENV_VAR,
+    DEV_DATABASE_NAME,
+    EXPECTED_DEV_AUTHORIZATION_TOKEN,
+    FIGMA_COMPANY_ID,
+    FIGMA_TEL_AVIV_JOB_ID,
     JobRefreshService,
     RefreshItemSummary,
     RefreshPlan,
     RefreshResult,
+    ScopedDevAuthorization,
 )
 from app.persistence.models.company import Company
 from app.persistence.models.job import Job
@@ -591,3 +597,838 @@ async def test_preview_refresh_ignores_updated_at_timestamp() -> None:
     assert plan.jobs_to_skip == 1
     assert plan.is_already_up_to_date is True
     assert plan.items[0].action == "SKIP"
+
+
+# =========================================================================
+# Scoped Dev Authorization Tests (6-Point Gate)
+# =========================================================================
+
+
+@pytest.mark.asyncio
+async def test_scoped_dev_authorization_requires_override_flag() -> None:
+    """Validate execution against dev fails when allow_database_override is missing."""
+    service = JobRefreshService()
+    mock_session = AsyncMock()
+    service.get_current_database = AsyncMock(return_value=DEV_DATABASE_NAME)
+
+    with pytest.raises(PermissionError, match="blocked without explicit override"):
+        await service.apply_refresh(
+            session=mock_session,
+            company_id_or_name=FIGMA_COMPANY_ID,
+            expected_database=DEV_DATABASE_NAME,
+            allow_database_override=None,
+            authorization_token=EXPECTED_DEV_AUTHORIZATION_TOKEN,
+        )
+
+
+@pytest.mark.asyncio
+async def test_scoped_dev_authorization_requires_valid_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Validate execution against dev fails when authorization token is missing or wrong."""
+    service = JobRefreshService()
+    mock_session = AsyncMock()
+    service.get_current_database = AsyncMock(return_value=DEV_DATABASE_NAME)
+
+    # Missing token
+    monkeypatch.delenv(DEV_AUTHORIZATION_TOKEN_ENV_VAR, raising=False)
+    with pytest.raises(PermissionError, match="requires valid authorization token"):
+        await service.apply_refresh(
+            session=mock_session,
+            company_id_or_name=FIGMA_COMPANY_ID,
+            expected_database=DEV_DATABASE_NAME,
+            allow_database_override=DEV_DATABASE_NAME,
+            authorization_token=None,
+        )
+
+    # Invalid token
+    with pytest.raises(PermissionError, match="requires valid authorization token"):
+        await service.apply_refresh(
+            session=mock_session,
+            company_id_or_name=FIGMA_COMPANY_ID,
+            expected_database=DEV_DATABASE_NAME,
+            allow_database_override=DEV_DATABASE_NAME,
+            authorization_token="INVALID_TOKEN_XYZ",
+        )
+
+
+@pytest.mark.asyncio
+async def test_scoped_dev_authorization_requires_dev_expected_database() -> None:
+    """Validate execution fails if current DB is dev but expected DB is not dev."""
+    service = JobRefreshService()
+    mock_session = AsyncMock()
+    service.get_current_database = AsyncMock(return_value=DEV_DATABASE_NAME)
+
+    with pytest.raises(ValueError, match="Database identity guard failed"):
+        await service.apply_refresh(
+            session=mock_session,
+            company_id_or_name=FIGMA_COMPANY_ID,
+            expected_database="job_intelligence_test",
+            allow_database_override=DEV_DATABASE_NAME,
+            authorization_token=EXPECTED_DEV_AUTHORIZATION_TOKEN,
+        )
+
+
+@pytest.mark.asyncio
+async def test_scoped_dev_authorization_requires_dev_connected_database() -> None:
+    """Validate execution fails if expected DB is dev but connected DB is test."""
+    service = JobRefreshService()
+    mock_session = AsyncMock()
+    service.get_current_database = AsyncMock(return_value="job_intelligence_test")
+
+    with pytest.raises(ValueError, match="Database identity guard failed"):
+        await service.apply_refresh(
+            session=mock_session,
+            company_id_or_name=FIGMA_COMPANY_ID,
+            expected_database=DEV_DATABASE_NAME,
+            allow_database_override=DEV_DATABASE_NAME,
+            authorization_token=EXPECTED_DEV_AUTHORIZATION_TOKEN,
+        )
+
+
+@pytest.mark.asyncio
+async def test_scoped_dev_authorization_rejects_non_figma_company() -> None:
+    """Validate execution against dev fails if company is not Figma."""
+    service = JobRefreshService()
+    mock_session = AsyncMock()
+    service.get_current_database = AsyncMock(return_value=DEV_DATABASE_NAME)
+
+    non_figma = Company(
+        id=uuid.uuid4(),
+        name="Other Corp",
+        normalized_name="other corp",
+        sector="Technology",
+        business_model="PRODUCT",
+        is_verified=True,
+    )
+    service._resolve_company = AsyncMock(return_value=non_figma)
+
+    with pytest.raises(PermissionError, match="strictly restricted to Figma"):
+        await service.apply_refresh(
+            session=mock_session,
+            company_id_or_name=non_figma.id,
+            expected_database=DEV_DATABASE_NAME,
+            allow_database_override=DEV_DATABASE_NAME,
+            authorization_token=EXPECTED_DEV_AUTHORIZATION_TOKEN,
+        )
+
+
+@pytest.mark.asyncio
+async def test_scoped_dev_authorization_rejects_arbitrary_database_override() -> None:
+    """Validate override flag cannot be used on arbitrary non-dev databases."""
+    service = JobRefreshService()
+    mock_session = AsyncMock()
+    service.get_current_database = AsyncMock(return_value="staging_db")
+
+    with pytest.raises(PermissionError, match="strictly restricted to allowlisted test database"):
+        await service.apply_refresh(
+            session=mock_session,
+            company_id_or_name=FIGMA_COMPANY_ID,
+            expected_database="staging_db",
+            allow_database_override="staging_db",
+            authorization_token=EXPECTED_DEV_AUTHORIZATION_TOKEN,
+        )
+
+
+@pytest.mark.asyncio
+async def test_scoped_dev_authorization_succeeds_when_all_conditions_met() -> None:
+    """Validate all 6 conditions pass authorization and execute successfully (simulated)."""
+    service = JobRefreshService()
+    mock_session = AsyncMock()
+    service.get_current_database = AsyncMock(return_value=DEV_DATABASE_NAME)
+
+    figma_company = Company(
+        id=FIGMA_COMPANY_ID,
+        name="Figma",
+        normalized_name="figma",
+        sector="Technology",
+        business_model="PRODUCT",
+        is_verified=True,
+    )
+    service._resolve_company = AsyncMock(return_value=figma_company)
+
+    # Empty plan (already up to date) for idempotency path
+    mock_plan = RefreshPlan(
+        company_id=FIGMA_COMPANY_ID,
+        company_name="Figma",
+        current_database=DEV_DATABASE_NAME,
+        total_jobs=138,
+        jobs_to_update=0,
+        jobs_to_skip=138,
+        verification_records_to_insert=0,
+        filter_decisions_to_insert=0,
+        is_already_up_to_date=True,
+        status_transitions={},
+        items=[],
+    )
+    service.preview_refresh = AsyncMock(return_value=mock_plan)
+
+    res = await service.apply_refresh(
+        session=mock_session,
+        company_id_or_name=FIGMA_COMPANY_ID,
+        expected_database=DEV_DATABASE_NAME,
+        allow_database_override=DEV_DATABASE_NAME,
+        authorization_token=EXPECTED_DEV_AUTHORIZATION_TOKEN,
+    )
+    assert res.status == "SKIPPED_ALREADY_APPLIED"
+    assert res.company_id == FIGMA_COMPANY_ID
+    assert res.target_database == DEV_DATABASE_NAME
+
+
+# =========================================================================
+# Pre-Commit In-Transaction Invariant Validation Tests
+# =========================================================================
+
+
+@pytest.mark.asyncio
+async def test_pre_commit_invariants_pass_when_figma_criteria_met() -> None:
+    """Validate _validate_pre_commit_invariants succeeds when all 138 Figma jobs match rules."""
+    service = JobRefreshService()
+    mock_session = AsyncMock()
+
+    figma_company = Company(
+        id=FIGMA_COMPANY_ID,
+        name="Figma",
+        normalized_name="figma",
+        sector="Technology",
+        business_model="PRODUCT",
+        is_verified=True,
+    )
+
+    now_utc = datetime.now(UTC)
+    mock_jobs = [
+        Job(
+            id=uuid.uuid4(),
+            company_id=FIGMA_COMPANY_ID,
+            eligibility_status="REJECTED",
+            rejection_reason="EXCLUDED_ROLE",
+            verification_confidence=Decimal("0.50"),
+            updated_at=now_utc,
+        )
+        for _ in range(138)
+    ]
+    # Set 138th job as the Tel Aviv job
+    tel_aviv_job = Job(
+        id=FIGMA_TEL_AVIV_JOB_ID,
+        company_id=FIGMA_COMPANY_ID,
+        eligibility_status="REJECTED",
+        rejection_reason="LOCATION_NOT_ALLOWED",
+        normalized_location="Tel Aviv",
+        source_verified=True,
+        verification_confidence=Decimal("0.50"),
+        updated_at=now_utc,
+    )
+    mock_jobs[137] = tel_aviv_job
+
+    plan = RefreshPlan(
+        company_id=FIGMA_COMPANY_ID,
+        company_name="Figma",
+        current_database="job_intelligence_test",
+        total_jobs=138,
+        jobs_to_update=138,
+        jobs_to_skip=0,
+        verification_records_to_insert=138,
+        filter_decisions_to_insert=138,
+        is_already_up_to_date=False,
+        status_transitions={},
+        items=[],
+    )
+
+    # Mock DB queries:
+    # 1. Total jobs count query -> 138
+    # 2. Distribution query -> (("REJECTED", "EXCLUDED_ROLE", 123), ("REJECTED", "LOCATION_NOT_ALLOWED", 15))
+    # 3. Non-rejected count query -> 0
+    # 4. Tel Aviv get -> tel_aviv_job
+    # 5. VerificationRecord per-job counts -> 138 jobs with count 2
+    # 6. FilterDecision per-job counts -> 138 jobs with count 2
+
+    job_ids = [j.id for j in mock_jobs]
+
+    async def mock_execute(stmt):
+        mock_res = MagicMock()
+        stmt_str = str(stmt).lower()
+        if "group by" in stmt_str and "rejection_reason" in stmt_str:
+            mock_res.all.return_value = [
+                ("REJECTED", "EXCLUDED_ROLE", 123),
+                ("REJECTED", "LOCATION_NOT_ALLOWED", 15),
+            ]
+        elif "group by" in stmt_str and (
+            "verification_records" in stmt_str or "filter_decisions" in stmt_str
+        ):
+            mock_res.all.return_value = [(jid, 2) for jid in job_ids]
+        elif "eligibility_status !=" in stmt_str or "eligibility_status <>" in stmt_str:
+            mock_res.scalar.return_value = 0
+        else:
+            mock_res.scalar.return_value = 138
+        return mock_res
+
+    mock_session.execute = AsyncMock(side_effect=mock_execute)
+    mock_session.get = AsyncMock(return_value=tel_aviv_job)
+
+    dev_auth = JobRefreshService._authorize_development_refresh(
+        company=figma_company,
+        current_db=DEV_DATABASE_NAME,
+        expected_db=DEV_DATABASE_NAME,
+        allow_database_override=DEV_DATABASE_NAME,
+        authorization_token=EXPECTED_DEV_AUTHORIZATION_TOKEN,
+    )
+
+    # Should execute without raising
+    await service._validate_pre_commit_invariants(
+        session=mock_session,
+        company=figma_company,
+        plan=plan,
+        jobs_to_process=mock_jobs,
+        now_utc=now_utc,
+        current_database=DEV_DATABASE_NAME,
+        dev_authorization=dev_auth,
+    )
+
+
+def test_scoped_dev_authorization_direct_construction_fails() -> None:
+    """Validate ScopedDevAuthorization cannot be constructed directly without private sentinel."""
+    with pytest.raises(
+        PermissionError, match="ScopedDevAuthorization cannot be constructed directly"
+    ):
+        ScopedDevAuthorization(
+            company_id=FIGMA_COMPANY_ID,
+            company_name="Figma",
+            database_name=DEV_DATABASE_NAME,
+        )
+
+
+def test_scoped_dev_authorization_verify_authority_mismatches() -> None:
+    """Validate verify_authority fails when company or database context mismatches."""
+    company = Company(
+        id=FIGMA_COMPANY_ID,
+        name="Figma",
+        normalized_name="figma",
+        sector="Technology",
+        business_model="PRODUCT",
+        is_verified=True,
+    )
+    auth = JobRefreshService._authorize_development_refresh(
+        company=company,
+        current_db=DEV_DATABASE_NAME,
+        expected_db=DEV_DATABASE_NAME,
+        allow_database_override=DEV_DATABASE_NAME,
+        authorization_token=EXPECTED_DEV_AUTHORIZATION_TOKEN,
+    )
+    # Valid authority passes
+    auth.verify_authority(target_company_id=FIGMA_COMPANY_ID, target_database=DEV_DATABASE_NAME)
+
+    # Wrong company
+    other_comp_id = uuid.uuid4()
+    with pytest.raises(PermissionError, match="Scoped authorization context mismatch"):
+        auth.verify_authority(target_company_id=other_comp_id, target_database=DEV_DATABASE_NAME)
+
+    # Wrong database
+    with pytest.raises(PermissionError, match="Scoped authorization context mismatch"):
+        auth.verify_authority(
+            target_company_id=FIGMA_COMPANY_ID, target_database="job_intelligence_test"
+        )
+
+
+@pytest.mark.asyncio
+async def test_unauthorized_call_cannot_reach_figma_dev_invariants() -> None:
+    """Validate that calling dev invariants without ScopedDevAuthorization raises PermissionError."""
+    service = JobRefreshService()
+    mock_session = AsyncMock()
+
+    figma_company = Company(
+        id=FIGMA_COMPANY_ID,
+        name="Figma",
+        normalized_name="figma",
+        sector="Technology",
+        business_model="PRODUCT",
+        is_verified=True,
+    )
+    now_utc = datetime.now(UTC)
+    mock_jobs = [
+        Job(
+            id=uuid.uuid4(),
+            company_id=FIGMA_COMPANY_ID,
+            eligibility_status="REJECTED",
+            rejection_reason="EXCLUDED_ROLE",
+            verification_confidence=Decimal("0.50"),
+            updated_at=now_utc,
+        )
+    ]
+    plan = RefreshPlan(
+        company_id=FIGMA_COMPANY_ID,
+        company_name="Figma",
+        current_database=DEV_DATABASE_NAME,
+        total_jobs=1,
+        jobs_to_update=1,
+        jobs_to_skip=0,
+        verification_records_to_insert=1,
+        filter_decisions_to_insert=1,
+        is_already_up_to_date=False,
+        status_transitions={},
+        items=[],
+    )
+
+    with pytest.raises(
+        PermissionError,
+        match="forbidden without explicit ScopedDevAuthorization proof",
+    ):
+        await service._validate_pre_commit_invariants(
+            session=mock_session,
+            company=figma_company,
+            plan=plan,
+            jobs_to_process=mock_jobs,
+            now_utc=now_utc,
+            current_database=DEV_DATABASE_NAME,
+            dev_authorization=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_pre_commit_invariants_fails_on_job_count_mismatch() -> None:
+    """Validate _validate_pre_commit_invariants raises when total Figma jobs != 138."""
+    service = JobRefreshService()
+    mock_session = AsyncMock()
+
+    figma_company = Company(
+        id=FIGMA_COMPANY_ID,
+        name="Figma",
+        normalized_name="figma",
+        sector="Technology",
+        business_model="PRODUCT",
+        is_verified=True,
+    )
+    now_utc = datetime.now(UTC)
+    mock_jobs = [
+        Job(
+            id=uuid.uuid4(),
+            company_id=FIGMA_COMPANY_ID,
+            eligibility_status="REJECTED",
+            rejection_reason="EXCLUDED_ROLE",
+            verification_confidence=Decimal("0.50"),
+            updated_at=now_utc,
+        )
+    ]
+    plan = RefreshPlan(
+        company_id=FIGMA_COMPANY_ID,
+        company_name="Figma",
+        current_database=DEV_DATABASE_NAME,
+        total_jobs=1,
+        jobs_to_update=1,
+        jobs_to_skip=0,
+        verification_records_to_insert=1,
+        filter_decisions_to_insert=1,
+        is_already_up_to_date=False,
+        status_transitions={},
+        items=[],
+    )
+
+    # Return count = 137
+    mock_res = MagicMock()
+    mock_res.scalar.return_value = 137
+    mock_session.execute = AsyncMock(return_value=mock_res)
+
+    dev_auth = JobRefreshService._authorize_development_refresh(
+        company=figma_company,
+        current_db=DEV_DATABASE_NAME,
+        expected_db=DEV_DATABASE_NAME,
+        allow_database_override=DEV_DATABASE_NAME,
+        authorization_token=EXPECTED_DEV_AUTHORIZATION_TOKEN,
+    )
+
+    with pytest.raises(RuntimeError, match="expected 138 Figma jobs, found 137"):
+        await service._validate_pre_commit_invariants(
+            session=mock_session,
+            company=figma_company,
+            plan=plan,
+            jobs_to_process=mock_jobs,
+            now_utc=now_utc,
+            current_database=DEV_DATABASE_NAME,
+            dev_authorization=dev_auth,
+        )
+
+
+@pytest.mark.asyncio
+async def test_pre_commit_invariants_fails_on_distribution_mismatch() -> None:
+    """Validate _validate_pre_commit_invariants raises when status distribution != 123/15."""
+    service = JobRefreshService()
+    mock_session = AsyncMock()
+
+    figma_company = Company(
+        id=FIGMA_COMPANY_ID,
+        name="Figma",
+        normalized_name="figma",
+        sector="Technology",
+        business_model="PRODUCT",
+        is_verified=True,
+    )
+    now_utc = datetime.now(UTC)
+    mock_jobs = [
+        Job(
+            id=uuid.uuid4(),
+            company_id=FIGMA_COMPANY_ID,
+            eligibility_status="REJECTED",
+            rejection_reason="EXCLUDED_ROLE",
+            verification_confidence=Decimal("0.50"),
+            updated_at=now_utc,
+        )
+    ]
+    plan = RefreshPlan(
+        company_id=FIGMA_COMPANY_ID,
+        company_name="Figma",
+        current_database=DEV_DATABASE_NAME,
+        total_jobs=1,
+        jobs_to_update=1,
+        jobs_to_skip=0,
+        verification_records_to_insert=1,
+        filter_decisions_to_insert=1,
+        is_already_up_to_date=False,
+        status_transitions={},
+        items=[],
+    )
+
+    async def mock_execute(stmt):
+        mock_res = MagicMock()
+        stmt_str = str(stmt).lower()
+        if "group by" in stmt_str and "rejection_reason" in stmt_str:
+            # Distribution mismatch: 120 EXCLUDED_ROLE and 18 LOCATION_NOT_ALLOWED
+            mock_res.all.return_value = [
+                ("REJECTED", "EXCLUDED_ROLE", 120),
+                ("REJECTED", "LOCATION_NOT_ALLOWED", 18),
+            ]
+        else:
+            mock_res.scalar.return_value = 138
+        return mock_res
+
+    mock_session.execute = AsyncMock(side_effect=mock_execute)
+
+    dev_auth = JobRefreshService._authorize_development_refresh(
+        company=figma_company,
+        current_db=DEV_DATABASE_NAME,
+        expected_db=DEV_DATABASE_NAME,
+        allow_database_override=DEV_DATABASE_NAME,
+        authorization_token=EXPECTED_DEV_AUTHORIZATION_TOKEN,
+    )
+
+    with pytest.raises(RuntimeError, match="expected 123 REJECTED/EXCLUDED_ROLE jobs, found 120"):
+        await service._validate_pre_commit_invariants(
+            session=mock_session,
+            company=figma_company,
+            plan=plan,
+            jobs_to_process=mock_jobs,
+            now_utc=now_utc,
+            current_database=DEV_DATABASE_NAME,
+            dev_authorization=dev_auth,
+        )
+
+
+@pytest.mark.asyncio
+async def test_pre_commit_invariants_fails_on_tel_aviv_job_mismatch() -> None:
+    """Validate _validate_pre_commit_invariants raises when Tel Aviv job attributes mismatch."""
+    service = JobRefreshService()
+    mock_session = AsyncMock()
+
+    figma_company = Company(
+        id=FIGMA_COMPANY_ID,
+        name="Figma",
+        normalized_name="figma",
+        sector="Technology",
+        business_model="PRODUCT",
+        is_verified=True,
+    )
+    now_utc = datetime.now(UTC)
+    mock_jobs = [
+        Job(
+            id=uuid.uuid4(),
+            company_id=FIGMA_COMPANY_ID,
+            eligibility_status="REJECTED",
+            rejection_reason="EXCLUDED_ROLE",
+            verification_confidence=Decimal("0.50"),
+            updated_at=now_utc,
+        )
+    ]
+    plan = RefreshPlan(
+        company_id=FIGMA_COMPANY_ID,
+        company_name="Figma",
+        current_database=DEV_DATABASE_NAME,
+        total_jobs=1,
+        jobs_to_update=1,
+        jobs_to_skip=0,
+        verification_records_to_insert=1,
+        filter_decisions_to_insert=1,
+        is_already_up_to_date=False,
+        status_transitions={},
+        items=[],
+    )
+
+    async def mock_execute(stmt):
+        mock_res = MagicMock()
+        stmt_str = str(stmt).lower()
+        if "group by" in stmt_str and "rejection_reason" in stmt_str:
+            mock_res.all.return_value = [
+                ("REJECTED", "EXCLUDED_ROLE", 123),
+                ("REJECTED", "LOCATION_NOT_ALLOWED", 15),
+            ]
+        elif "eligibility_status !=" in stmt_str or "eligibility_status <>" in stmt_str:
+            mock_res.scalar.return_value = 0
+        else:
+            mock_res.scalar.return_value = 138
+        return mock_res
+
+    mock_session.execute = AsyncMock(side_effect=mock_execute)
+
+    # Tel Aviv job with confidence 0.30 instead of 0.50
+    bad_tel_aviv = Job(
+        id=FIGMA_TEL_AVIV_JOB_ID,
+        company_id=FIGMA_COMPANY_ID,
+        eligibility_status="REJECTED",
+        rejection_reason="LOCATION_NOT_ALLOWED",
+        normalized_location="Tel Aviv",
+        source_verified=True,
+        verification_confidence=Decimal("0.30"),  # Mismatch!
+        updated_at=now_utc,
+    )
+    mock_session.get = AsyncMock(return_value=bad_tel_aviv)
+
+    dev_auth = JobRefreshService._authorize_development_refresh(
+        company=figma_company,
+        current_db=DEV_DATABASE_NAME,
+        expected_db=DEV_DATABASE_NAME,
+        allow_database_override=DEV_DATABASE_NAME,
+        authorization_token=EXPECTED_DEV_AUTHORIZATION_TOKEN,
+    )
+
+    with pytest.raises(
+        RuntimeError, match="Tel Aviv job verification_confidence is 0.30, expected 0.50"
+    ):
+        await service._validate_pre_commit_invariants(
+            session=mock_session,
+            company=figma_company,
+            plan=plan,
+            jobs_to_process=mock_jobs,
+            now_utc=now_utc,
+            current_database=DEV_DATABASE_NAME,
+            dev_authorization=dev_auth,
+        )
+
+
+@pytest.mark.asyncio
+async def test_pre_commit_invariants_fails_on_audit_count_mismatch() -> None:
+    """Validate _validate_pre_commit_invariants raises when a Figma job lacks 2 audit rows."""
+    service = JobRefreshService()
+    mock_session = AsyncMock()
+
+    figma_company = Company(
+        id=FIGMA_COMPANY_ID,
+        name="Figma",
+        normalized_name="figma",
+        sector="Technology",
+        business_model="PRODUCT",
+        is_verified=True,
+    )
+    now_utc = datetime.now(UTC)
+    mock_jobs = [
+        Job(
+            id=uuid.uuid4(),
+            company_id=FIGMA_COMPANY_ID,
+            eligibility_status="REJECTED",
+            rejection_reason="EXCLUDED_ROLE",
+            verification_confidence=Decimal("0.50"),
+            updated_at=now_utc,
+        )
+    ]
+    plan = RefreshPlan(
+        company_id=FIGMA_COMPANY_ID,
+        company_name="Figma",
+        current_database=DEV_DATABASE_NAME,
+        total_jobs=1,
+        jobs_to_update=1,
+        jobs_to_skip=0,
+        verification_records_to_insert=1,
+        filter_decisions_to_insert=1,
+        is_already_up_to_date=False,
+        status_transitions={},
+        items=[],
+    )
+
+    valid_tel_aviv = Job(
+        id=FIGMA_TEL_AVIV_JOB_ID,
+        company_id=FIGMA_COMPANY_ID,
+        eligibility_status="REJECTED",
+        rejection_reason="LOCATION_NOT_ALLOWED",
+        normalized_location="Tel Aviv",
+        source_verified=True,
+        verification_confidence=Decimal("0.50"),
+        updated_at=now_utc,
+    )
+    mock_session.get = AsyncMock(return_value=valid_tel_aviv)
+
+    async def mock_execute(stmt):
+        mock_res = MagicMock()
+        stmt_str = str(stmt).lower()
+        if "group by" in stmt_str and "rejection_reason" in stmt_str:
+            mock_res.all.return_value = [
+                ("REJECTED", "EXCLUDED_ROLE", 123),
+                ("REJECTED", "LOCATION_NOT_ALLOWED", 15),
+            ]
+        elif "eligibility_status !=" in stmt_str or "eligibility_status <>" in stmt_str:
+            mock_res.scalar.return_value = 0
+        elif "verification_records" in stmt_str and "group by" in stmt_str:
+            # Audit row count mismatch: only 137 records returned
+            mock_res.all.return_value = [(uuid.uuid4(), 2) for _ in range(137)]
+        else:
+            mock_res.scalar.return_value = 138
+        return mock_res
+
+    mock_session.execute = AsyncMock(side_effect=mock_execute)
+
+    dev_auth = JobRefreshService._authorize_development_refresh(
+        company=figma_company,
+        current_db=DEV_DATABASE_NAME,
+        expected_db=DEV_DATABASE_NAME,
+        allow_database_override=DEV_DATABASE_NAME,
+        authorization_token=EXPECTED_DEV_AUTHORIZATION_TOKEN,
+    )
+
+    with pytest.raises(
+        RuntimeError, match="each of the 138 Figma jobs must have exactly 2 VerificationRecords"
+    ):
+        await service._validate_pre_commit_invariants(
+            session=mock_session,
+            company=figma_company,
+            plan=plan,
+            jobs_to_process=mock_jobs,
+            now_utc=now_utc,
+            current_database=DEV_DATABASE_NAME,
+            dev_authorization=dev_auth,
+        )
+
+
+@pytest.mark.asyncio
+async def test_test_database_refresh_cannot_trigger_figma_dev_invariants() -> None:
+    """Validate that a refresh against test database cannot accidentally trigger Figma dev invariants."""
+    service = JobRefreshService()
+    mock_session = AsyncMock()
+
+    figma_company = Company(
+        id=FIGMA_COMPANY_ID,
+        name="Figma",
+        normalized_name="figma",
+        sector="Technology",
+        business_model="PRODUCT",
+        is_verified=True,
+    )
+    now_utc = datetime.now(UTC)
+    # Only 2 jobs (NOT 138)
+    mock_jobs = [
+        Job(
+            id=uuid.uuid4(),
+            company_id=FIGMA_COMPANY_ID,
+            eligibility_status="REJECTED",
+            rejection_reason="EXCLUDED_ROLE",
+            verification_confidence=Decimal("0.50"),
+            updated_at=now_utc,
+        ),
+        Job(
+            id=uuid.uuid4(),
+            company_id=FIGMA_COMPANY_ID,
+            eligibility_status="REJECTED",
+            rejection_reason="EXCLUDED_ROLE",
+            verification_confidence=Decimal("0.50"),
+            updated_at=now_utc,
+        ),
+    ]
+    plan = RefreshPlan(
+        company_id=FIGMA_COMPANY_ID,
+        company_name="Figma",
+        current_database="job_intelligence_test",
+        total_jobs=2,
+        jobs_to_update=2,
+        jobs_to_skip=0,
+        verification_records_to_insert=2,
+        filter_decisions_to_insert=2,
+        is_already_up_to_date=False,
+        status_transitions={},
+        items=[],
+    )
+
+    # Calling with current_database='job_intelligence_test' MUST NOT trigger the 138-job check
+    await service._validate_pre_commit_invariants(
+        session=mock_session,
+        company=figma_company,
+        plan=plan,
+        jobs_to_process=mock_jobs,
+        now_utc=now_utc,
+        current_database="job_intelligence_test",
+    )
+
+
+@pytest.mark.asyncio
+async def test_generic_company_pre_commit_invariants() -> None:
+    """Validate generic companies pass pre-commit invariants without Figma-specific checks."""
+    service = JobRefreshService()
+    mock_session = AsyncMock()
+
+    generic_company = Company(
+        id=uuid.uuid4(),
+        name="Acme Corp",
+        normalized_name="acme corp",
+        sector="Technology",
+        business_model="PRODUCT",
+        is_verified=True,
+    )
+    now_utc = datetime.now(UTC)
+    job = Job(
+        id=uuid.uuid4(),
+        company_id=generic_company.id,
+        eligibility_status="ELIGIBLE",
+        verification_confidence=Decimal("0.90"),
+        updated_at=now_utc,
+    )
+    plan = RefreshPlan(
+        company_id=generic_company.id,
+        company_name=generic_company.name,
+        current_database="job_intelligence_test",
+        total_jobs=1,
+        jobs_to_update=1,
+        jobs_to_skip=0,
+        verification_records_to_insert=1,
+        filter_decisions_to_insert=1,
+        is_already_up_to_date=False,
+        status_transitions={},
+        items=[],
+    )
+
+    # Should succeed without executing Figma queries
+    await service._validate_pre_commit_invariants(
+        session=mock_session,
+        company=generic_company,
+        plan=plan,
+        jobs_to_process=[job],
+        now_utc=now_utc,
+        current_database="job_intelligence_test",
+    )
+
+    # Fails if processed jobs count mismatches plan
+    with pytest.raises(
+        RuntimeError, match="Pre-commit invariant violation: processed 0 jobs, expected 1"
+    ):
+        await service._validate_pre_commit_invariants(
+            session=mock_session,
+            company=generic_company,
+            plan=plan,
+            jobs_to_process=[],
+            now_utc=now_utc,
+            current_database="job_intelligence_test",
+        )
+
+    # Fails if job has null eligibility_status
+    job.eligibility_status = ""
+    with pytest.raises(RuntimeError, match="has null eligibility_status"):
+        await service._validate_pre_commit_invariants(
+            session=mock_session,
+            company=generic_company,
+            plan=plan,
+            jobs_to_process=[job],
+            now_utc=now_utc,
+            current_database="job_intelligence_test",
+        )

@@ -233,6 +233,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Expected database name (required for --apply)",
     )
     refresh_parser.add_argument(
+        "--allow-database-override",
+        type=str,
+        default=None,
+        help="Explicitly authorized database name override for controlled dev refresh",
+    )
+    refresh_parser.add_argument(
         "--json",
         action="store_true",
         default=False,
@@ -457,6 +463,7 @@ async def _handle_refresh(args: argparse.Namespace) -> int:
             preview=args.preview,
             apply=args.apply,
             target_database=args.target_database,
+            allow_database_override=args.allow_database_override,
             output_json=args.json,
             output_file=args.output_file,
         )

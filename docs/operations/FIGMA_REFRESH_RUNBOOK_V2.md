@@ -24,7 +24,7 @@
    The refresh runs inside a single database transaction. Before commit, in-transaction pre-commit invariants assert:
    - Total canonical Figma jobs == 138
    - Status distribution: exactly 123 `REJECTED/EXCLUDED_ROLE`, 15 `REJECTED/LOCATION_NOT_ALLOWED`, 0 `REVIEW`, 0 `ELIGIBLE`
-   - Tel Aviv job (`bdf7f339-da99-44e2-9b2d-fe4a7738f65d`) updated to `REJECTED/LOCATION_NOT_ALLOWED`, `normalized_location='Tel Aviv'`, `source_verified=True`, `confidence=0.50`
+   - Tel Aviv job (`b69651a0-05c0-4737-8e3b-473bbe5fb53b`) updated to `REJECTED/LOCATION_NOT_ALLOWED`, `normalized_location='Tel Aviv'`, `source_verified=True`, `confidence=0.50`
    - Exactly 2 `VerificationRecord` and 2 `FilterDecision` rows exist per job (1 baseline + 1 refresh)
    If any invariant check fails, the transaction is immediately aborted with `ROLLBACK`.
 
@@ -168,7 +168,7 @@ Write-Host "[3/3] Asserting full relational entity parity..." -ForegroundColor C
 $Query = @"
 SELECT
     (SELECT COUNT(*) FROM companies WHERE id = '4916b6da-2803-4a9e-b3ce-dd41ef2a5324' AND normalized_name = 'figma') AS company_cnt,
-    (SELECT COUNT(*) FROM sources WHERE id = '8525ba85-f298-4b98-bb4e-22124ccd640a' AND source_name = 'Greenhouse') AS source_cnt,
+    (SELECT COUNT(*) FROM sources WHERE id = '8525ba85-f298-4b98-bb4e-22124ccd640a' AND UPPER(source_name) = 'GREENHOUSE') AS source_cnt,
     (SELECT COUNT(*) FROM company_sources WHERE company_id = '4916b6da-2803-4a9e-b3ce-dd41ef2a5324') AS cs_cnt,
     (SELECT COUNT(*) FROM collection_runs) AS run_cnt,
     (SELECT COUNT(*) FROM jobs WHERE company_id = '4916b6da-2803-4a9e-b3ce-dd41ef2a5324') AS job_cnt,
@@ -176,7 +176,7 @@ SELECT
     (SELECT COUNT(*) FROM job_source_references) AS ref_cnt,
     (SELECT COUNT(*) FROM verification_records) AS verif_cnt,
     (SELECT COUNT(*) FROM filter_decisions) AS filter_cnt,
-    (SELECT COUNT(*) FROM jobs WHERE id = 'bdf7f339-da99-44e2-9b2d-fe4a7738f65d' AND eligibility_status = 'REVIEW' AND review_reason = 'POSTED_DATE_SUSPICIOUS') AS tel_aviv_cnt;
+    (SELECT COUNT(*) FROM jobs WHERE id = 'b69651a0-05c0-4737-8e3b-473bbe5fb53b' AND eligibility_status = 'REVIEW' AND review_reason = 'POSTED_DATE_SUSPICIOUS') AS tel_aviv_cnt;
 "@
 
 $RawParity = & psql -h localhost -p 5432 -U postgres -d "$SandboxDb" -v ON_ERROR_STOP=1 -A -t -F "|" -c "$Query"
@@ -289,7 +289,7 @@ SELECT
     (SELECT COUNT(*) FROM jobs WHERE company_id = '4916b6da-2803-4a9e-b3ce-dd41ef2a5324' AND eligibility_status = 'ELIGIBLE') AS eligible_cnt,
     (SELECT COUNT(*) FROM verification_records) AS total_verif_records,
     (SELECT COUNT(*) FROM filter_decisions) AS total_filter_decisions,
-    (SELECT COUNT(*) FROM jobs WHERE id = 'bdf7f339-da99-44e2-9b2d-fe4a7738f65d' AND eligibility_status = 'REJECTED' AND rejection_reason = 'LOCATION_NOT_ALLOWED' AND normalized_location = 'Tel Aviv' AND source_verified = true AND verification_confidence = 0.50) AS tel_aviv_verified;
+    (SELECT COUNT(*) FROM jobs WHERE id = 'b69651a0-05c0-4737-8e3b-473bbe5fb53b' AND eligibility_status = 'REJECTED' AND rejection_reason = 'LOCATION_NOT_ALLOWED' AND normalized_location = 'Tel Aviv' AND source_verified = true AND verification_confidence = 0.50) AS tel_aviv_verified;
 "@
 
 $RawPost = & psql -h localhost -p 5432 -U postgres -d job_intelligence_dev -v ON_ERROR_STOP=1 -A -t -F "|" -c "$VerifyQuery"

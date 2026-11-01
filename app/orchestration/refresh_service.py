@@ -50,7 +50,7 @@ ALLOWED_MUTATING_DATABASES: frozenset[str] = frozenset({"job_intelligence_test"}
 # Scoped authorization parameters for controlled development database refresh
 DEV_DATABASE_NAME: str = "job_intelligence_dev"
 FIGMA_COMPANY_ID: uuid.UUID = uuid.UUID("4916b6da-2803-4a9e-b3ce-dd41ef2a5324")
-FIGMA_TEL_AVIV_JOB_ID: uuid.UUID = uuid.UUID("bdf7f339-da99-44e2-9b2d-fe4a7738f65d")
+FIGMA_TEL_AVIV_JOB_ID: uuid.UUID = uuid.UUID("b69651a0-05c0-4737-8e3b-473bbe5fb53b")
 # Fixed manual confirmation phrase (not a secret credential) required for dev override confirmation
 DEV_AUTHORIZATION_TOKEN_ENV_VAR: str = "FIGMA_REFRESH_AUTHORIZATION_TOKEN"
 EXPECTED_DEV_AUTHORIZATION_TOKEN: str = "AUTHORIZE_FIGMA_REFRESH_DEV_05377f2ddb14"
@@ -81,6 +81,29 @@ class RefreshItemSummary(BaseModel):
     confidence_changed: bool
     verification_passed_changed: bool
     source_verified_changed: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert item summary to serializable dictionary."""
+        return {
+            "job_id": str(self.job_id),
+            "source_job_id": self.source_job_id,
+            "title": self.title,
+            "location": self.location,
+            "action": self.action,
+            "persisted_status": self.persisted_status,
+            "proposed_status": self.proposed_status,
+            "persisted_rejection_reason": self.persisted_rejection_reason,
+            "proposed_rejection_reason": self.proposed_rejection_reason,
+            "persisted_review_reason": self.persisted_review_reason,
+            "proposed_review_reason": self.proposed_review_reason,
+            "persisted_confidence": float(self.persisted_confidence),
+            "proposed_confidence": float(self.proposed_confidence),
+            "status_changed": self.status_changed,
+            "reason_changed": self.reason_changed,
+            "confidence_changed": self.confidence_changed,
+            "verification_passed_changed": self.verification_passed_changed,
+            "source_verified_changed": self.source_verified_changed,
+        }
 
 
 class RefreshPlan(BaseModel):
@@ -113,29 +136,7 @@ class RefreshPlan(BaseModel):
             "filter_decisions_to_insert": self.filter_decisions_to_insert,
             "is_already_up_to_date": self.is_already_up_to_date,
             "status_transitions": self.status_transitions,
-            "items": [
-                {
-                    "job_id": str(item.job_id),
-                    "source_job_id": item.source_job_id,
-                    "title": item.title,
-                    "location": item.location,
-                    "action": item.action,
-                    "persisted_status": item.persisted_status,
-                    "proposed_status": item.proposed_status,
-                    "persisted_rejection_reason": item.persisted_rejection_reason,
-                    "proposed_rejection_reason": item.proposed_rejection_reason,
-                    "persisted_review_reason": item.persisted_review_reason,
-                    "proposed_review_reason": item.proposed_review_reason,
-                    "persisted_confidence": float(item.persisted_confidence),
-                    "proposed_confidence": float(item.proposed_confidence),
-                    "status_changed": item.status_changed,
-                    "reason_changed": item.reason_changed,
-                    "confidence_changed": item.confidence_changed,
-                    "verification_passed_changed": item.verification_passed_changed,
-                    "source_verified_changed": item.source_verified_changed,
-                }
-                for item in self.items
-            ],
+            "items": [item.to_dict() for item in self.items],
         }
 
 
@@ -419,6 +420,9 @@ class JobRefreshService:
         res = await session.execute(stmt)
         jobs: Sequence[Job] = res.scalars().all()
 
+        # Cache preview jobs for immediate reuse by apply_refresh in the same session context
+        self._cached_preview_jobs = (id(session), company.id, jobs)
+
         items: list[RefreshItemSummary] = []
         jobs_to_update = 0
         jobs_to_skip = 0
@@ -636,24 +640,48 @@ class JobRefreshService:
                 plan=plan,
             )
 
-        # 6. Load jobs to update
+        # 6. Load jobs to update (reuse already loaded session entities if available to avoid redundant queries)
         update_job_ids = {item.job_id for item in plan.items if item.action == "UPDATE"}
-        stmt = (
-            select(Job)
-            .options(
-                selectinload(Job.source_references)
-                .selectinload(JobSourceReference.raw_job)
-                .selectinload(RawJob.company_source)
-                .selectinload(CompanySource.source),
-                selectinload(Job.source_references).selectinload(JobSourceReference.source),
-            )
-            .where(Job.id.in_(update_job_ids))
-        )
-        res = await session.execute(stmt)
-        jobs_to_process = res.scalars().all()
+        jobs_to_process: Sequence[Job] = []
 
-        v_records_count = 0
-        f_decisions_count = 0
+        cached = getattr(self, "_cached_preview_jobs", None)
+        can_reuse_cached = False
+        if (
+            cached
+            and cached[0] == id(session)
+            and cached[1] == plan.company_id
+            and (
+                not isinstance(session, AsyncSession)
+                or all(
+                    AsyncSession.object_session(j) is getattr(session, "sync_session", session)
+                    for j in cached[2]
+                )
+            )
+        ):
+            can_reuse_cached = True
+
+        if can_reuse_cached and cached is not None:
+            jobs_to_process = [j for j in cached[2] if j.id in update_job_ids]
+        else:
+            stmt = (
+                select(Job)
+                .options(
+                    selectinload(Job.source_references)
+                    .selectinload(JobSourceReference.raw_job)
+                    .selectinload(RawJob.company_source)
+                    .selectinload(CompanySource.source),
+                    selectinload(Job.source_references).selectinload(JobSourceReference.source),
+                )
+                .where(Job.id.in_(update_job_ids))
+            )
+            res = await session.execute(stmt)
+            jobs_to_process = res.scalars().all()
+
+        # Always clear preview cache after single consumption
+        self._cached_preview_jobs = None
+
+        v_records: list[VerificationRecord] = []
+        f_decisions: list[FilterDecision] = []
 
         for job in jobs_to_process:
             # Resolve provenance
@@ -717,9 +745,7 @@ class JobRefreshService:
                 job_id=job.id,
                 verification_run_at=now_utc,
             )
-            v_record = VerificationRecord(**v_record_kwargs)
-            session.add(v_record)
-            v_records_count += 1
+            v_records.append(VerificationRecord(**v_record_kwargs))
 
             # B. Re-evaluate Filter Decisions
             posting_date_verif = (
@@ -753,9 +779,7 @@ class JobRefreshService:
             # Append new historical FilterDecision
             f_decision_kwargs = f_result.to_filter_decision_kwargs(job_id=job.id)
             f_decision_kwargs["evaluated_at"] = now_utc
-            f_decision = FilterDecision(**f_decision_kwargs)
-            session.add(f_decision)
-            f_decisions_count += 1
+            f_decisions.append(FilterDecision(**f_decision_kwargs))
 
             # C. Update canonical Job operational attributes
             status_updates = f_result.to_job_status_updates()
@@ -772,6 +796,12 @@ class JobRefreshService:
                 job.normalized_location = norm_loc
 
             job.updated_at = now_utc
+
+        # Batch insert audit rows
+        session.add_all(v_records)
+        session.add_all(f_decisions)
+        v_records_count = len(v_records)
+        f_decisions_count = len(f_decisions)
 
         # Flush dirty state to surface constraints without committing transaction
         await session.flush()

@@ -42,6 +42,7 @@ from app.orchestration.verification_service import (
 )
 from app.persistence.models.job import Job
 from app.persistence.models.raw_job import JobSourceReference, RawJob
+from app.persistence.models.source import CompanySource
 from app.persistence.repositories.company_source_repository import (
     CompanySourceRepository,
 )
@@ -207,6 +208,7 @@ class JobIngestionService:
         self.decision_service = decision_service or (
             JobFilterDecisionService.from_session(session) if session is not None else None
         )
+        self._company_source_cache: dict[uuid.UUID, CompanySource] = {}
 
     @classmethod
     def from_session(
@@ -488,7 +490,12 @@ class JobIngestionService:
         if self.cs_repo is None:
             return
 
-        company_source = await self.cs_repo.get_by_id(env.company_source_id)
+        company_source = self._company_source_cache.get(env.company_source_id)
+        if company_source is None:
+            company_source = await self.cs_repo.get_by_id(env.company_source_id)
+            if company_source is not None:
+                self._company_source_cache[env.company_source_id] = company_source
+
         if company_source is None:
             raise ValueError(
                 f"CompanySource mapping with id '{env.company_source_id}' does not exist in registry."

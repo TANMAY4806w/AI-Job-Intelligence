@@ -261,6 +261,7 @@ async def test_preview_refresh_detects_all_modifiable_fields(
     """Validate that preview_refresh flags UPDATE if ANY of the 13 canonical attributes differs."""
     service = JobRefreshService()
     mock_session = AsyncMock()
+    mock_session.add_all = MagicMock()
     service.get_current_database = AsyncMock(return_value="job_intelligence_test")
 
     company_id = uuid.uuid4()
@@ -393,6 +394,7 @@ async def test_preview_refresh_skips_when_all_13_fields_match() -> None:
     """Validate that preview_refresh returns SKIP and is_already_up_to_date=True when all 13 fields match."""
     service = JobRefreshService()
     mock_session = AsyncMock()
+    mock_session.add_all = MagicMock()
     service.get_current_database = AsyncMock(return_value="job_intelligence_test")
 
     company_id = uuid.uuid4()
@@ -497,6 +499,7 @@ async def test_preview_refresh_ignores_updated_at_timestamp() -> None:
     """Validate updated_at alone never triggers an UPDATE when all 13 canonical fields match."""
     service = JobRefreshService()
     mock_session = AsyncMock()
+    mock_session.add_all = MagicMock()
     service.get_current_database = AsyncMock(return_value="job_intelligence_test")
 
     company_id = uuid.uuid4()
@@ -674,6 +677,7 @@ async def test_scoped_dev_authorization_requires_dev_connected_database() -> Non
     """Validate execution fails if expected DB is dev but connected DB is test."""
     service = JobRefreshService()
     mock_session = AsyncMock()
+    mock_session.add_all = MagicMock()
     service.get_current_database = AsyncMock(return_value="job_intelligence_test")
 
     with pytest.raises(ValueError, match="Database identity guard failed"):
@@ -1431,4 +1435,219 @@ async def test_generic_company_pre_commit_invariants() -> None:
             jobs_to_process=[job],
             now_utc=now_utc,
             current_database="job_intelligence_test",
+        )
+
+
+def test_refresh_item_summary_to_dict() -> None:
+    """Verify RefreshItemSummary.to_dict formats all 17 fields correctly."""
+    item_id = uuid.uuid4()
+    item = RefreshItemSummary(
+        job_id=item_id,
+        source_job_id="test_src_1",
+        title="Software Engineer",
+        location="Remote",
+        action="UPDATE",
+        persisted_status="REVIEW",
+        proposed_status="REJECTED",
+        persisted_rejection_reason=None,
+        proposed_rejection_reason="LOCATION_NOT_ALLOWED",
+        persisted_review_reason="POSTED_DATE_SUSPICIOUS",
+        proposed_review_reason=None,
+        persisted_confidence=Decimal("0.30"),
+        proposed_confidence=Decimal("0.50"),
+        status_changed=True,
+        reason_changed=True,
+        confidence_changed=True,
+        verification_passed_changed=False,
+        source_verified_changed=True,
+    )
+    d = item.to_dict()
+    assert d["job_id"] == str(item_id)
+    assert d["source_job_id"] == "test_src_1"
+    assert d["action"] == "UPDATE"
+    assert d["persisted_status"] == "REVIEW"
+    assert d["proposed_status"] == "REJECTED"
+    assert d["proposed_rejection_reason"] == "LOCATION_NOT_ALLOWED"
+    assert d["persisted_confidence"] == 0.30
+    assert d["proposed_confidence"] == 0.50
+    assert d["source_verified_changed"] is True
+
+
+@pytest.mark.asyncio
+async def test_apply_refresh_reuses_cached_preview_jobs() -> None:
+    """Verify apply_refresh reuses preview jobs cache to eliminate redundant Job re-query."""
+    service = JobRefreshService()
+    mock_session = AsyncMock()
+    mock_session.add_all = MagicMock()
+    service.get_current_database = AsyncMock(return_value="job_intelligence_test")
+
+    company_id = uuid.uuid4()
+    company = Company(
+        id=company_id,
+        name="Cache Corp",
+        normalized_name="cache_corp",
+        sector="Technology",
+        business_model="B2B_SAAS",
+        is_verified=True,
+    )
+    service._resolve_company = AsyncMock(return_value=company)
+
+    job_id = uuid.uuid4()
+    mock_job = Job(
+        id=job_id,
+        company_id=company_id,
+        company_name=company.name,
+        title="Software Engineer",
+        location="San Francisco, CA",
+        eligibility_status="REVIEW",
+        review_reason="POSTED_DATE_SUSPICIOUS",
+        verification_confidence=Decimal("0.30"),
+        source_references=[],
+    )
+
+    # Seed preview cache manually as preview_refresh would
+    service._cached_preview_jobs = (id(mock_session), company_id, [mock_job])
+
+    # Plan indicates job needs update
+    plan = RefreshPlan(
+        company_id=company_id,
+        company_name=company.name,
+        current_database="job_intelligence_test",
+        total_jobs=1,
+        jobs_to_update=1,
+        jobs_to_skip=0,
+        verification_records_to_insert=1,
+        filter_decisions_to_insert=1,
+        is_already_up_to_date=False,
+        status_transitions={"REVIEW -> REJECTED": 1},
+        items=[
+            RefreshItemSummary(
+                job_id=job_id,
+                source_job_id="123",
+                title=mock_job.title,
+                location=mock_job.location,
+                action="UPDATE",
+                persisted_status="REVIEW",
+                proposed_status="REJECTED",
+                persisted_rejection_reason=None,
+                proposed_rejection_reason="LOCATION_NOT_ALLOWED",
+                persisted_review_reason="POSTED_DATE_SUSPICIOUS",
+                proposed_review_reason=None,
+                persisted_confidence=Decimal("0.30"),
+                proposed_confidence=Decimal("0.50"),
+                status_changed=True,
+                reason_changed=True,
+                confidence_changed=True,
+                verification_passed_changed=False,
+                source_verified_changed=True,
+            )
+        ],
+    )
+    service.preview_refresh = AsyncMock(return_value=plan)
+    service._validate_pre_commit_invariants = AsyncMock()
+
+    res = await service.apply_refresh(
+        session=mock_session,
+        company_id_or_name=company_id,
+        expected_database="job_intelligence_test",
+        dry_run=False,
+    )
+
+    assert res.status == "SUCCESS"
+    assert res.jobs_updated == 1
+    # session.execute should NOT have been called to re-query the jobs
+    mock_session.execute.assert_not_called()
+    # Cache should be cleared after consumption
+    assert service._cached_preview_jobs is None
+    # session.add_all should have been called for batch persistence
+    assert mock_session.add_all.call_count == 2
+
+
+def test_figma_tel_aviv_job_id_authoritative_uuid() -> None:
+    """Verify FIGMA_TEL_AVIV_JOB_ID matches the authoritative dev database and report UUID."""
+    actual_uuid = FIGMA_TEL_AVIV_JOB_ID
+    expected_uuid = uuid.UUID("b69651a0-05c0-4737-8e3b-473bbe5fb53b")
+    legacy_uuid = uuid.UUID("bdf7f339-da99-44e2-9b2d-fe4a7738f65d")
+
+    assert actual_uuid == expected_uuid
+    assert actual_uuid != legacy_uuid
+
+
+@pytest.mark.asyncio
+async def test_pre_commit_invariants_rejects_missing_tel_aviv_uuid() -> None:
+    """Verify invariant check fails if the authoritative Tel Aviv job is not found."""
+    service = JobRefreshService()
+    mock_session = AsyncMock()
+    now_utc = datetime.now(UTC)
+
+    figma_company = Company(
+        id=FIGMA_COMPANY_ID,
+        name="Figma",
+        normalized_name="figma",
+        sector="Technology",
+        business_model="B2B_SAAS",
+        is_verified=True,
+    )
+    mock_jobs = [
+        Job(
+            id=uuid.uuid4(),
+            company_id=FIGMA_COMPANY_ID,
+            eligibility_status="REJECTED",
+            rejection_reason="EXCLUDED_ROLE",
+            verification_confidence=Decimal("0.50"),
+            updated_at=now_utc,
+        )
+    ]
+    plan = RefreshPlan(
+        company_id=FIGMA_COMPANY_ID,
+        company_name="Figma",
+        current_database=DEV_DATABASE_NAME,
+        total_jobs=1,
+        jobs_to_update=1,
+        jobs_to_skip=0,
+        verification_records_to_insert=1,
+        filter_decisions_to_insert=1,
+        is_already_up_to_date=False,
+        status_transitions={},
+        items=[],
+    )
+
+    async def mock_execute(stmt):
+        mock_res = MagicMock()
+        stmt_str = str(stmt).lower()
+        if "group by" in stmt_str and "rejection_reason" in stmt_str:
+            mock_res.all.return_value = [
+                ("REJECTED", "EXCLUDED_ROLE", 123),
+                ("REJECTED", "LOCATION_NOT_ALLOWED", 15),
+            ]
+        elif "eligibility_status !=" in stmt_str or "eligibility_status <>" in stmt_str:
+            mock_res.scalar.return_value = 0
+        else:
+            mock_res.scalar.return_value = 138
+        return mock_res
+
+    mock_session.execute = AsyncMock(side_effect=mock_execute)
+    # Simulate Tel Aviv job missing (e.g. if looking for old UUID or job deleted)
+    mock_session.get = AsyncMock(return_value=None)
+
+    dev_auth = JobRefreshService._authorize_development_refresh(
+        company=figma_company,
+        current_db=DEV_DATABASE_NAME,
+        expected_db=DEV_DATABASE_NAME,
+        allow_database_override=DEV_DATABASE_NAME,
+        authorization_token=EXPECTED_DEV_AUTHORIZATION_TOKEN,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=f"Pre-commit invariant violation: Tel Aviv job {FIGMA_TEL_AVIV_JOB_ID} not found",
+    ):
+        await service._validate_pre_commit_invariants(
+            session=mock_session,
+            company=figma_company,
+            plan=plan,
+            jobs_to_process=mock_jobs,
+            now_utc=now_utc,
+            current_database=DEV_DATABASE_NAME,
+            dev_authorization=dev_auth,
         )

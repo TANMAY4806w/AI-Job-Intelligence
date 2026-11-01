@@ -847,3 +847,73 @@ async def test_pre_commit_invariant_failure_triggers_atomic_rollback(
         job_b = await session.get(Job, job_b_id)
         assert job_b.eligibility_status == "REVIEW"
         assert job_b.review_reason == "POSTED_DATE_SUSPICIOUS"
+
+
+@pytest.mark.asyncio
+async def test_apply_refresh_performance_optimization_and_parity() -> None:
+    """Verify that optimized apply_refresh maintains 100% data parity and audit history in test DB."""
+    session_factory = get_sessionmaker()
+    async with session_factory() as session:
+        comp, _, _, jobs, _, _ = await _seed_refresh_test_data(session)
+        comp_id = comp.id
+        job_b_id = jobs[1].id
+
+    service = JobRefreshService()
+
+    # 1. Preview refresh generates plan and populates preview cache
+    async with session_factory() as session:
+        plan = await service.preview_refresh(
+            session, comp_id, target_database="job_intelligence_test"
+        )
+        assert plan.jobs_to_update == 2
+        assert service._cached_preview_jobs is not None
+
+        # 2. Apply refresh reuses cached jobs and batches insert of audit records
+        res = await service.apply_refresh(
+            session=session,
+            company_id_or_name=comp_id,
+            expected_database="job_intelligence_test",
+            dry_run=False,
+        )
+        await session.commit()
+
+    assert res.status == "SUCCESS"
+    assert res.jobs_updated == 2
+    assert res.verification_records_inserted == 2
+    assert res.filter_decisions_inserted == 2
+
+    # 3. Verify database state
+    async with session_factory() as session:
+        job_b = await session.get(Job, job_b_id)
+        assert job_b.eligibility_status == "REJECTED"
+        assert job_b.rejection_reason == "LOCATION_NOT_ALLOWED"
+
+        # Check audit rows count: Job B now has 2 verification records and 2 filter decisions
+        v_cnt = (
+            await session.execute(
+                select(func.count(VerificationRecord.id)).where(
+                    VerificationRecord.job_id == job_b_id
+                )
+            )
+        ).scalar()
+        f_cnt = (
+            await session.execute(
+                select(func.count(FilterDecision.id)).where(FilterDecision.job_id == job_b_id)
+            )
+        ).scalar()
+        assert v_cnt == 2
+        assert f_cnt == 2
+
+    # 4. Idempotency re-run: returns SKIPPED_ALREADY_APPLIED with 0 updates
+    async with session_factory() as session:
+        res2 = await service.apply_refresh(
+            session=session,
+            company_id_or_name=comp_id,
+            expected_database="job_intelligence_test",
+            dry_run=False,
+        )
+        await session.commit()
+
+    assert res2.status == "SKIPPED_ALREADY_APPLIED"
+    assert res2.applied is False
+    assert res2.jobs_updated == 0

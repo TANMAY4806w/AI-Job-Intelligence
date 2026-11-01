@@ -855,3 +855,38 @@ async def test_ingest_without_verification_evidence_forwards_none(
     mock_verification_service.evaluate_and_persist.assert_awaited_once()
     evidence_passed = mock_verification_service.evaluate_and_persist.call_args.kwargs["evidence"]
     assert evidence_passed is None
+
+
+@pytest.mark.asyncio
+async def test_ingest_company_source_caching_eliminates_redundant_queries(
+    ingestion_service: JobIngestionService,
+    mock_cs_repo: MagicMock,
+) -> None:
+    """Verify that multiple envelopes sharing company_source_id query repository exactly once."""
+    shared_cs_id = uuid.uuid4()
+    shared_c_id = uuid.uuid4()
+    shared_s_id = uuid.uuid4()
+    mock_cs = MagicMock(id=shared_cs_id, company_id=shared_c_id, source_id=shared_s_id)
+    mock_cs_repo.get_by_id = AsyncMock(return_value=mock_cs)
+
+    env1 = _make_sample_envelope(source_job_id="job_cache_1")
+    env1.company_source_id = shared_cs_id
+    env1.company_id = shared_c_id
+    env1.source_id = shared_s_id
+
+    env2 = _make_sample_envelope(source_job_id="job_cache_2")
+    env2.company_source_id = shared_cs_id
+    env2.company_id = shared_c_id
+    env2.source_id = shared_s_id
+
+    env3 = _make_sample_envelope(source_job_id="job_cache_3")
+    env3.company_source_id = shared_cs_id
+    env3.company_id = shared_c_id
+    env3.source_id = shared_s_id
+
+    await ingestion_service.ingest(env1)
+    await ingestion_service.ingest(env2)
+    await ingestion_service.ingest(env3)
+
+    # Repository get_by_id must be called exactly once due to in-memory caching
+    assert mock_cs_repo.get_by_id.await_count == 1

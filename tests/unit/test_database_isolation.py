@@ -66,7 +66,7 @@ async def test_clean_test_database_refuses_development_database() -> None:
         await clean_test_database(DEV_URL)
 
 
-def test_all_eleven_application_models_included_in_truncate_list() -> None:
+def test_all_twelve_application_models_included_in_truncate_list() -> None:
     """Verify that every application model table in Base.metadata is in the truncate tuple."""
     from app.persistence.models import Base
     from tests.database_isolation import APPLICATION_TABLES_ORDERED_FOR_TRUNCATE
@@ -74,8 +74,8 @@ def test_all_eleven_application_models_included_in_truncate_list() -> None:
     model_table_names = set(Base.metadata.tables.keys())
     truncate_table_names = set(APPLICATION_TABLES_ORDERED_FOR_TRUNCATE)
 
-    assert len(model_table_names) == 11, (
-        f"Expected 11 application tables, found: {len(model_table_names)}"
+    assert len(model_table_names) == 12, (
+        f"Expected 12 application tables, found: {len(model_table_names)}"
     )
     assert truncate_table_names == model_table_names, (
         f"Mismatch between application models and truncate list: "

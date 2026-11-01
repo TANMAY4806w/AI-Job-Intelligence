@@ -225,6 +225,34 @@ async def execute_refresh_workflow(
         )
         # Commit transaction
         await session.commit()
+
+        # Post-commit automatic notification dispatch (if enabled)
+        # Executed strictly AFTER the refresh transaction has committed to PostgreSQL.
+        # Failures during notification dispatch NEVER roll back or invalidate the committed refresh.
+        try:
+            from app.config.settings import get_settings
+            from app.notifications.email_service import EmailNotificationService
+            from app.persistence.session import session_scope
+
+            settings = get_settings()
+            if settings.EMAIL_NOTIFICATIONS_ENABLED and settings.NOTIFICATION_RECIPIENT_EMAIL:
+                logger.info("Triggering post-refresh automatic notification dispatch...")
+                async with session_scope() as notify_session:
+                    notify_service = EmailNotificationService(notify_session)
+                    dispatch_res = await notify_service.process_batch(
+                        recipient_email=settings.NOTIFICATION_RECIPIENT_EMAIL,
+                        dry_run=False,
+                    )
+                    logger.info(
+                        "Post-refresh notifications completed: %d sent, %d failed",
+                        dispatch_res.total_sent,
+                        dispatch_res.total_failed,
+                    )
+        except Exception as notify_err:
+            logger.warning(
+                "Post-refresh notification dispatch failed (refresh changes remain committed): %s",
+                notify_err,
+            )
     except (ValueError, PermissionError, RuntimeError) as err:
         await session.rollback()
         print(f"ERROR: {err}", file=sys.stderr)

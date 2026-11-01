@@ -29,6 +29,7 @@ if TYPE_CHECKING:
         FilterDecision,
         VerificationRecord,
     )
+    from app.persistence.models.notification import NotificationDelivery
     from app.persistence.models.raw_job import JobSourceReference
 
 
@@ -154,6 +155,32 @@ class Job(Base):
         "AIAnalysisResult",
         back_populates="job",
     )
+    notification_deliveries: Mapped[list["NotificationDelivery"]] = relationship(
+        "NotificationDelivery",
+        back_populates="job",
+        cascade="all, delete-orphan",
+    )
+
+    @property
+    def human_review_status(self) -> str:
+        """Resolve human triage status from recorded FilterDecisions or eligibility_status.
+
+        Decouples human triage (PENDING, APPROVED, REJECTED, DISMISSED) from candidate
+        application tracking (job.application_status).
+        """
+        decisions = self.__dict__.get("filter_decisions")
+        if decisions:
+            human_decisions = [
+                d
+                for d in decisions
+                if getattr(d, "rule_version", None) in ("HUMAN_REVIEW_V1", "HUMAN_REVIEW")
+            ]
+            if human_decisions:
+                latest = max(human_decisions, key=lambda d: d.evaluated_at)
+                return str(latest.final_status)
+        if getattr(self, "eligibility_status", None) == "REVIEW":
+            return "PENDING"
+        return "NOT_REQUIRED"
 
     __table_args__ = (
         Index("idx_jobs_eligibility_priority", "eligibility_status", "role_priority"),

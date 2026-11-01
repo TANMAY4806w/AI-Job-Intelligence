@@ -22,8 +22,8 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     LOG_LEVEL: str = "INFO"
 
-    # API Server
-    API_HOST: str = "0.0.0.0"
+    # API Server (Bound strictly to localhost for private local development safety)
+    API_HOST: str = "127.0.0.1"
     API_PORT: int = 8000
 
     # Persistence (PostgreSQL)
@@ -32,6 +32,20 @@ class Settings(BaseSettings):
 
     # Scheduling
     SCHEDULER_ENABLED: bool = False
+
+    # Email Notifications (V1)
+    EMAIL_NOTIFICATIONS_ENABLED: bool = False
+    SMTP_HOST: str = "localhost"
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_USE_TLS: bool = True
+    SMTP_TIMEOUT_SECONDS: float = 10.0
+    NOTIFICATION_RECIPIENT_EMAIL: str = ""
+    NOTIFICATION_SENDER_EMAIL: str = "notifications@ai-job-intelligence.local"
+    DASHBOARD_BASE_URL: str = "http://127.0.0.1:8000"
+    ADDITIONAL_TRUSTED_ORIGINS: list[str] = []
+    ADDITIONAL_ALLOWED_HOSTS: list[str] = []
 
     # LLM Gateway Placeholders
     GEMINI_API_KEY: str = ""

@@ -3,12 +3,16 @@
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy.orm import selectinload
 
+from app.persistence.models.decision import FilterDecision
 from app.persistence.models.job import Job
 from app.persistence.models.raw_job import JobSourceReference
+from app.persistence.models.source import Source
 from app.persistence.repositories.base import BaseRepository
 
 
@@ -171,6 +175,427 @@ class JobRepository(BaseRepository):
         for field, value in verification_updates.items():
             if hasattr(job, field):
                 setattr(job, field, value)
+        job.updated_at = datetime.now(UTC)
+        await self.session.flush()
+        return job
+
+    async def get_by_id_with_details(self, job_id: uuid.UUID) -> Job | None:
+        """Retrieve a canonical Job by ID with all relationships eagerly loaded.
+
+        Loads:
+        - company
+        - source_references and their underlying source
+        - filter_decisions ordered by evaluated_at descending
+        - verification_records ordered by verification_run_at descending
+        """
+        stmt = (
+            select(Job)
+            .options(
+                selectinload(Job.company),
+                selectinload(Job.source_references).selectinload(JobSourceReference.source),
+                selectinload(Job.filter_decisions),
+                selectinload(Job.verification_records),
+            )
+            .where(Job.id == job_id)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def search_and_filter_jobs(
+        self,
+        *,
+        search: str | None = None,
+        eligibility: str | None = None,
+        priority: str | None = None,
+        location: str | None = None,
+        provider: str | None = None,
+        remote_type: str | None = None,
+        min_salary: Decimal | float | None = None,
+        max_experience: Decimal | float | None = None,
+        application_status: str | None = None,
+        human_review_status: str | None = None,
+        sort_by: str = "freshness",
+        include_dismissed: bool = False,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> tuple[Sequence[Job], int]:
+        """Search and filter canonical jobs with dynamic faceted conditions and eager loading.
+
+        Prevents N+1 database queries by batch-loading company, source references, and filter decisions.
+        Excludes dismissed jobs by default unless include_dismissed is explicitly True.
+        """
+        clauses = []
+
+        latest_human_decision = (
+            select(FilterDecision.final_status)
+            .where(
+                FilterDecision.job_id == Job.id,
+                FilterDecision.rule_version == "HUMAN_REVIEW_V1",
+            )
+            .order_by(FilterDecision.evaluated_at.desc(), FilterDecision.id.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+
+        if not include_dismissed:
+            clauses.append(
+                or_(
+                    latest_human_decision.is_(None),
+                    latest_human_decision != "DISMISSED",
+                )
+            )
+
+        if application_status and application_status.strip():
+            clauses.append(Job.application_status == application_status.strip().upper())
+
+        if human_review_status and human_review_status.strip():
+            hrs = human_review_status.strip().upper()
+            if hrs in ("APPROVED", "REJECTED", "DISMISSED"):
+                clauses.append(latest_human_decision == hrs)
+            elif hrs == "PENDING":
+                clauses.append(
+                    and_(
+                        Job.eligibility_status == "REVIEW",
+                        latest_human_decision.is_(None),
+                    )
+                )
+            elif hrs == "NOT_REQUIRED":
+                clauses.append(
+                    and_(
+                        Job.eligibility_status != "REVIEW",
+                        latest_human_decision.is_(None),
+                    )
+                )
+
+        if search and search.strip():
+            term = f"%{search.strip().lower()}%"
+            clauses.append(
+                or_(
+                    func.lower(Job.title).like(term),
+                    func.lower(Job.company_name).like(term),
+                    func.lower(Job.location).like(term),
+                    func.lower(Job.description).like(term),
+                )
+            )
+
+        if eligibility and eligibility.strip():
+            clauses.append(Job.eligibility_status == eligibility.strip().upper())
+
+        if priority and priority.strip():
+            clauses.append(Job.role_priority == priority.strip().upper())
+
+        if location and location.strip():
+            loc_term = f"%{location.strip().lower()}%"
+            clauses.append(
+                or_(
+                    func.lower(Job.location).like(loc_term),
+                    func.lower(Job.normalized_location).like(loc_term),
+                )
+            )
+
+        if remote_type and remote_type.strip():
+            clauses.append(Job.remote_type == remote_type.strip().upper())
+
+        if min_salary is not None:
+            clauses.append(
+                or_(
+                    Job.salary_min >= min_salary,
+                    Job.salary_max >= min_salary,
+                )
+            )
+
+        if max_experience is not None:
+            clauses.append(
+                or_(
+                    Job.experience_min_years <= max_experience,
+                    Job.experience_max_years <= max_experience,
+                )
+            )
+
+        if provider and provider.strip():
+            prov_lower = provider.strip().lower()
+            clauses.append(
+                Job.source_references.any(
+                    JobSourceReference.source.has(
+                        or_(
+                            func.lower(Source.source_name) == prov_lower,
+                            func.lower(Source.source_type) == prov_lower,
+                        )
+                    )
+                )
+            )
+
+        # Total count query
+        count_stmt = select(func.count(Job.id))
+        if clauses:
+            count_stmt = count_stmt.where(and_(*clauses))
+        total_res = await self.session.execute(count_stmt)
+        total = total_res.scalar_one()
+
+        # Paginated results query with batch eager loading to prevent N+1 queries
+        stmt = select(Job).options(
+            selectinload(Job.company),
+            selectinload(Job.source_references).selectinload(JobSourceReference.source),
+            selectinload(Job.filter_decisions),
+        )
+        if clauses:
+            stmt = stmt.where(and_(*clauses))
+
+        # Sorting logic
+        if sort_by == "priority":
+            priority_order = case(
+                (Job.role_priority == "P1", 1),
+                (Job.role_priority == "P2", 2),
+                (Job.role_priority == "P3", 3),
+                else_=4,
+            )
+            stmt = stmt.order_by(
+                priority_order, Job.posted_at.desc().nullslast(), Job.collected_at.desc()
+            )
+        elif sort_by == "company":
+            stmt = stmt.order_by(Job.company_name.asc(), Job.posted_at.desc().nullslast())
+        else:  # "freshness" (default)
+            stmt = stmt.order_by(Job.posted_at.desc().nullslast(), Job.collected_at.desc())
+
+        stmt = stmt.limit(limit).offset(offset)
+        result = await self.session.execute(stmt)
+        return result.scalars().all(), total
+
+    async def get_review_queue(
+        self,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> tuple[Sequence[Job], int]:
+        """Retrieve jobs flagged for human review (eligibility_status == 'REVIEW') pending action.
+
+        Excludes dismissed and already-reviewed jobs. Eagerly loads companies, sources, and decisions.
+        """
+        latest_human_decision = (
+            select(FilterDecision.final_status)
+            .where(
+                FilterDecision.job_id == Job.id,
+                FilterDecision.rule_version == "HUMAN_REVIEW_V1",
+            )
+            .order_by(FilterDecision.evaluated_at.desc(), FilterDecision.id.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+
+        base_clause = and_(
+            Job.eligibility_status == "REVIEW",
+            latest_human_decision.is_(None),
+        )
+
+        count_stmt = select(func.count(Job.id)).where(base_clause)
+        total_res = await self.session.execute(count_stmt)
+        total = total_res.scalar_one()
+
+        stmt = (
+            select(Job)
+            .options(
+                selectinload(Job.company),
+                selectinload(Job.source_references).selectinload(JobSourceReference.source),
+                selectinload(Job.filter_decisions),
+            )
+            .where(base_clause)
+            .order_by(Job.posted_at.desc().nullslast(), Job.collected_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().all(), total
+
+    async def get_filter_facets(self) -> dict[str, Any]:
+        """Compute aggregated facets and status distributions across all stored jobs."""
+        latest_human_decision = (
+            select(FilterDecision.final_status)
+            .where(
+                FilterDecision.job_id == Job.id,
+                FilterDecision.rule_version == "HUMAN_REVIEW_V1",
+            )
+            .order_by(FilterDecision.evaluated_at.desc(), FilterDecision.id.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+
+        active_jobs_clause = or_(
+            latest_human_decision.is_(None),
+            latest_human_decision != "DISMISSED",
+        )
+        dismissed_clause = latest_human_decision == "DISMISSED"
+        pending_review_clause = and_(
+            Job.eligibility_status == "REVIEW",
+            latest_human_decision.is_(None),
+        )
+
+        # Totals
+        total_stmt = select(
+            func.count(Job.id).filter(active_jobs_clause).label("total_active"),
+            func.count(Job.id)
+            .filter(and_(active_jobs_clause, Job.eligibility_status == "ELIGIBLE"))
+            .label("total_eligible"),
+            func.count(Job.id).filter(pending_review_clause).label("total_review"),
+            func.count(Job.id)
+            .filter(and_(active_jobs_clause, Job.eligibility_status == "REJECTED"))
+            .label("total_rejected"),
+            func.count(Job.id).filter(dismissed_clause).label("total_dismissed"),
+        )
+        totals_row = (await self.session.execute(total_stmt)).one()
+
+        # Eligibility counts
+        elig_stmt = (
+            select(Job.eligibility_status, func.count(Job.id))
+            .where(active_jobs_clause)
+            .group_by(Job.eligibility_status)
+        )
+        elig_res = await self.session.execute(elig_stmt)
+        eligibility_counts = {row[0]: row[1] for row in elig_res.all() if row[0] is not None}
+
+        # Priority counts
+        priority_stmt = (
+            select(Job.role_priority, func.count(Job.id))
+            .where(active_jobs_clause)
+            .group_by(Job.role_priority)
+        )
+        priority_res = await self.session.execute(priority_stmt)
+        priority_counts = {row[0]: row[1] for row in priority_res.all() if row[0] is not None}
+
+        # Remote type counts
+        remote_stmt = (
+            select(Job.remote_type, func.count(Job.id))
+            .where(active_jobs_clause)
+            .group_by(Job.remote_type)
+        )
+        remote_res = await self.session.execute(remote_stmt)
+        remote_type_counts = {row[0]: row[1] for row in remote_res.all() if row[0] is not None}
+
+        # Provider counts
+        provider_stmt = (
+            select(Source.source_name, func.count(Job.id.distinct()))
+            .join(JobSourceReference, JobSourceReference.source_id == Source.id)
+            .join(Job, Job.id == JobSourceReference.job_id)
+            .where(active_jobs_clause)
+            .group_by(Source.source_name)
+        )
+        prov_res = await self.session.execute(provider_stmt)
+        provider_counts = {row[0]: row[1] for row in prov_res.all() if row[0] is not None}
+
+        # Top locations
+        loc_stmt = (
+            select(Job.location, func.count(Job.id).label("count"))
+            .where(and_(active_jobs_clause, Job.location.is_not(None), Job.location != ""))
+            .group_by(Job.location)
+            .order_by(func.count(Job.id).desc())
+            .limit(10)
+        )
+        loc_res = await self.session.execute(loc_stmt)
+        top_locations = [{"name": row[0], "count": row[1]} for row in loc_res.all()]
+
+        return {
+            "total_jobs": totals_row.total_active or 0,
+            "total_eligible": totals_row.total_eligible or 0,
+            "total_review": totals_row.total_review or 0,
+            "total_rejected": totals_row.total_rejected or 0,
+            "total_dismissed": totals_row.total_dismissed or 0,
+            "eligibility_counts": eligibility_counts,
+            "priority_counts": priority_counts,
+            "remote_type_counts": remote_type_counts,
+            "provider_counts": provider_counts,
+            "top_locations": top_locations,
+        }
+
+    async def record_human_review(
+        self,
+        job: Job,
+        action: str,
+        notes: str | None = None,
+        reviewer: str = "human_reviewer",
+    ) -> FilterDecision:
+        """Record a human reviewer decision without modifying deterministic eligibility_status
+        or candidate application_status.
+
+        Appends an immutable FilterDecision audit record with rule_version='HUMAN_REVIEW_V1'.
+        """
+        normalized_action = action.upper()
+        if normalized_action == "APPROVE":
+            final_status = "APPROVED"
+        elif normalized_action == "REJECT":
+            final_status = "REJECTED"
+        else:
+            raise ValueError(f"Invalid review action: '{action}'. Must be 'APPROVE' or 'REJECT'.")
+
+        job.updated_at = datetime.now(UTC)
+
+        decision = FilterDecision(
+            job_id=job.id,
+            rule_version="HUMAN_REVIEW_V1",
+            final_status=final_status,
+            role_priority=job.role_priority,
+            reason_codes=[f"HUMAN_REVIEW_{normalized_action}"],
+            evaluation_context={
+                "action": normalized_action,
+                "notes": notes or "",
+                "reviewer": reviewer,
+            },
+            evaluated_at=datetime.now(UTC),
+        )
+        self.session.add(decision)
+        await self.session.flush()
+        return decision
+
+    async def record_dismissal(
+        self,
+        job: Job,
+        reason: str | None = None,
+        reviewer: str = "human_reviewer",
+    ) -> FilterDecision:
+        """Mark a job as dismissed via an immutable FilterDecision audit record.
+
+        Preserves deterministic eligibility_status and candidate application_status.
+        """
+        job.updated_at = datetime.now(UTC)
+
+        decision = FilterDecision(
+            job_id=job.id,
+            rule_version="HUMAN_REVIEW_V1",
+            final_status="DISMISSED",
+            role_priority=job.role_priority,
+            reason_codes=["HUMAN_DISMISS"],
+            evaluation_context={
+                "reason": reason or "Dismissed by user",
+                "reviewer": reviewer,
+            },
+            evaluated_at=datetime.now(UTC),
+        )
+        self.session.add(decision)
+        await self.session.flush()
+        return decision
+
+    async def update_application_status(
+        self,
+        job: Job,
+        new_status: str,
+    ) -> Job:
+        """Update candidate application workflow tracking status independently of review triage.
+
+        Allowed values: NOT_APPLIED, SAVED, APPLIED, INTERVIEW, OFFER, REJECTED_BY_COMPANY, WITHDRAWN.
+        """
+        allowed = {
+            "NOT_APPLIED",
+            "SAVED",
+            "APPLIED",
+            "INTERVIEW",
+            "OFFER",
+            "REJECTED_BY_COMPANY",
+            "WITHDRAWN",
+        }
+        normalized = new_status.strip().upper()
+        if normalized not in allowed:
+            raise ValueError(
+                f"Invalid application status '{new_status}'. Allowed values: {sorted(allowed)}"
+            )
+        job.application_status = normalized
         job.updated_at = datetime.now(UTC)
         await self.session.flush()
         return job

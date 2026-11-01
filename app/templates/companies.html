@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}Tracked Companies — AI-Job-Intelligence{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="sm:flex sm:items-center sm:justify-between bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm">
+        <div>
+            <h1 class="text-2xl font-bold tracking-tight text-slate-900">Tracked Companies & ATS Boards</h1>
+            <p class="mt-1 text-sm text-slate-500">Corporate entities configured across Greenhouse, Lever, and Ashby integration platforms.</p>
+        </div>
+        <div class="mt-4 sm:mt-0">
+            <span class="inline-flex items-center px-3.5 py-1.5 rounded-xl text-xs font-bold bg-indigo-50 text-indigo-700">
+                {{ companies|length }} Companies Registered
+            </span>
+        </div>
+    </div>
+
+    <!-- Company Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        {% for company in companies %}
+        <div class="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm hover:border-slate-300 transition space-y-4 flex flex-col justify-between">
+            <div class="space-y-3">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-lg font-bold text-slate-900">{{ company.name }}</h2>
+                    {% if company.is_verified %}
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 text-emerald-800">
+                        Verified
+                    </span>
+                    {% endif %}
+                </div>
+
+                <div class="text-xs text-slate-500 space-y-1">
+                    <div><span class="font-medium text-slate-700">Industry:</span> {{ company.industry or 'Technology' }}</div>
+                    <div><span class="font-medium text-slate-700">Sector:</span> {{ company.sector or 'Software' }}</div>
+                    {% if company.website %}
+                    <div>
+                        <span class="font-medium text-slate-700">Website:</span>
+                        <a href="{{ company.website }}" target="_blank" class="text-indigo-600 hover:underline">
+                            {{ company.website }}
+                        </a>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <!-- ATS Integrations -->
+                <div class="space-y-1.5 pt-2">
+                    <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Configured ATS Boards</h3>
+                    <div class="flex flex-wrap gap-1.5">
+                        {% for src in company.sources %}
+                        <span class="px-2 py-1 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 flex items-center space-x-1">
+                            <span class="w-1.5 h-1.5 rounded-full {% if src.source_name == 'greenhouse' %}bg-emerald-500{% elif src.source_name == 'lever' %}bg-blue-500{% elif src.source_name == 'ashby' %}bg-purple-500{% else %}bg-slate-400{% endif %}"></span>
+                            <span class="capitalize">{{ src.source_name }}</span>
+                            {% if src.career_url %}
+                            <a href="{{ src.career_url }}" target="_blank" class="text-indigo-600 ml-1 hover:underline" title="View Board">&nearr;</a>
+                            {% endif %}
+                        </span>
+                        {% else %}
+                        <span class="text-xs text-slate-400 italic">No ATS board linked yet.</span>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Footer Stats -->
+            <div class="pt-4 border-t border-slate-100 flex items-center justify-between text-xs">
+                <span class="font-semibold text-slate-700">
+                    <strong class="text-indigo-600 text-sm font-bold">{{ company.active_jobs_count }}</strong> active vacancies
+                </span>
+                <a href="/jobs?search={{ company.name }}" class="font-semibold text-indigo-600 hover:text-indigo-800 transition">
+                    View Jobs &rarr;
+                </a>
+            </div>
+        </div>
+        {% else %}
+        <div class="col-span-full bg-white p-16 rounded-2xl border border-slate-200 text-center space-y-2">
+            <h3 class="text-base font-bold text-slate-900">No companies found</h3>
+            <p class="text-xs text-slate-500">Database has not been seeded with company registry entries.</p>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

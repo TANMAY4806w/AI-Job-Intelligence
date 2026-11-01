@@ -25,9 +25,9 @@ def test_alembic_config_and_script_directory() -> None:
     heads = script_dir.get_heads()
 
     assert len(heads) == 1, f"Expected exactly 1 migration head revision, found {heads}"
-    assert heads[0] == "05377f2ddb14", f"Unexpected head revision: {heads[0]}"
+    assert heads[0] == "20a5ee5a034d", f"Unexpected head revision: {heads[0]}"
 
-    for rev_id in ("091bce25752c", "0dcb0808bacc", "05377f2ddb14"):
+    for rev_id in ("091bce25752c", "0dcb0808bacc", "05377f2ddb14", "20a5ee5a034d"):
         rev = script_dir.get_revision(rev_id)
         assert rev is not None, f"Revision {rev_id} must exist"
         assert hasattr(rev.module, "upgrade"), f"Revision {rev_id} must define upgrade()"
@@ -35,7 +35,7 @@ def test_alembic_config_and_script_directory() -> None:
 
 
 def test_alembic_env_targets_base_metadata() -> None:
-    """Verify that migrations/env.py specifies Base.metadata covering all 11 tables."""
+    """Verify that migrations/env.py specifies Base.metadata covering all 12 tables."""
     env_path = Path(__file__).resolve().parents[2] / "migrations" / "env.py"
     assert env_path.exists(), "migrations/env.py must exist"
 
@@ -43,8 +43,8 @@ def test_alembic_env_targets_base_metadata() -> None:
     assert "target_metadata = Base.metadata" in content
     assert "from app.persistence.models import Base" in content
 
-    # Verify Base metadata has all 11 tables
-    assert len(Base.metadata.tables) == 11
+    # Verify Base metadata has all 12 tables
+    assert len(Base.metadata.tables) == 12
 
 
 def test_offline_sql_generation_succeeds() -> None:
@@ -80,6 +80,7 @@ def test_offline_sql_generation_succeeds() -> None:
     assert "CREATE TABLE ai_analysis_results" in sql_output
     assert "CREATE TABLE discovery_runs" in sql_output
     assert "CREATE TABLE collection_runs" in sql_output
+    assert "CREATE TABLE notification_deliveries" in sql_output
 
     # Verify partial unique indexes on company_sources
     assert "CREATE UNIQUE INDEX uq_company_sources_ats" in sql_output

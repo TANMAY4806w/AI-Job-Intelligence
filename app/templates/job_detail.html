@@ -1,0 +1,390 @@
+{% extends "base.html" %}
+
+{% block title %}{{ job.title }} at {{ job.company_name }} — AI-Job-Intelligence{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Breadcrumb -->
+    <div class="flex items-center space-x-2 text-xs text-slate-500">
+        <a href="/jobs" class="hover:text-indigo-600 transition">&larr; Back to Job Feed</a>
+        <span>/</span>
+        <span class="text-slate-800 font-medium">{{ job.company_name }}</span>
+        <span>/</span>
+        <span class="truncate max-w-xs">{{ job.title }}</span>
+    </div>
+
+    <!-- Main Header Card -->
+    <div class="bg-white p-6 sm:p-8 rounded-2xl border border-slate-200/80 shadow-sm space-y-6">
+        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+            <div class="space-y-2">
+                <div class="flex flex-wrap items-center gap-2.5">
+                    <h1 class="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
+                        {{ job.title }}
+                    </h1>
+
+                    <!-- Priority Tier -->
+                    {% if job.role_priority == 'P1' %}
+                    <span class="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        P1 Core Match
+                    </span>
+                    {% elif job.role_priority == 'P2' %}
+                    <span class="px-2.5 py-1 rounded-lg text-xs font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                        P2 Standard Match
+                    </span>
+                    {% else %}
+                    <span class="px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                        P3 Adjacent
+                    </span>
+                    {% endif %}
+
+                    <!-- Deterministic Eligibility Status -->
+                    {% if job.eligibility_status == 'ELIGIBLE' %}
+                    <span class="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-300">
+                        ✓ Verified Eligible
+                    </span>
+                    {% elif job.eligibility_status == 'REVIEW' %}
+                    <span class="px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-50 text-amber-700 border border-amber-300">
+                        ? Human Review Needed
+                    </span>
+                    {% elif job.eligibility_status == 'REJECTED' %}
+                    <span class="px-2.5 py-1 rounded-lg text-xs font-bold bg-rose-50 text-rose-700 border border-rose-300">
+                        ✕ Filtered / Ineligible
+                    </span>
+                    {% endif %}
+
+                    <!-- Human Review Status Badge -->
+                    <span class="px-2.5 py-1 rounded-lg text-xs font-semibold {% if job.human_review_status == 'APPROVED' %}bg-emerald-100 text-emerald-800 border border-emerald-300{% elif job.human_review_status == 'REJECTED' %}bg-rose-100 text-rose-800 border border-rose-300{% elif job.human_review_status == 'PENDING' %}bg-amber-100 text-amber-800 border border-amber-300{% elif job.human_review_status == 'DISMISSED' %}bg-slate-200 text-slate-700 border border-slate-300{% else %}bg-slate-100 text-slate-600 border border-slate-200{% endif %}">
+                        Review: <strong id="header-review-status">{{ job.human_review_status }}</strong>
+                    </span>
+
+                    <!-- Candidate Application Tracking Badge -->
+                    <span class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-800 border border-indigo-200">
+                        Application: <strong id="header-app-status">{{ job.application_status }}</strong>
+                    </span>
+                </div>
+
+                <!-- Company & Compensation Subtitle -->
+                <div class="flex flex-wrap items-center gap-y-1 gap-x-4 text-sm text-slate-600">
+                    <span class="font-bold text-slate-900 text-base">{{ job.company_name }}</span>
+                    <span>•</span>
+                    <span>{{ job.location or 'Location unstated' }}</span>
+                    <span>•</span>
+                    <span class="capitalize px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-medium text-xs">{{ job.remote_type.lower() }}</span>
+
+                    {% if job.salary_min is not none or job.salary_max is not none %}
+                    <span>•</span>
+                    <span class="text-emerald-700 font-bold">
+                        {% if job.salary_min is not none and job.salary_max is not none %}
+                        {{ job.salary_currency }} {{ "{:,.0f}".format(job.salary_min) }} - {{ "{:,.0f}".format(job.salary_max) }}
+                        {% elif job.salary_min is not none %}
+                        From {{ job.salary_currency }} {{ "{:,.0f}".format(job.salary_min) }}
+                        {% elif job.salary_max is not none %}
+                        Up to {{ job.salary_currency }} {{ "{:,.0f}".format(job.salary_max) }}
+                        {% endif %}
+                        <span class="text-xs font-normal text-slate-500">({{ job.salary_period or 'per year' }})</span>
+                    </span>
+                    {% endif %}
+
+                    {% if job.experience_min_years is not none or job.experience_max_years is not none %}
+                    <span>•</span>
+                    <span>
+                        Exp: {% if job.experience_min_years is not none %}{{ job.experience_min_years }}{% else %}0{% endif %} - {% if job.experience_max_years is not none %}{{ job.experience_max_years }} yrs{% else %}+ yrs{% endif %}
+                    </span>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Header Action Buttons -->
+            <div class="flex flex-wrap items-center gap-3 shrink-0">
+                {% if job.application_url and job.application_url != '#' %}
+                <a href="{{ job.application_url|safe_url }}" target="_blank" rel="noopener noreferrer" class="px-5 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition shadow-sm flex items-center space-x-1.5">
+                    <span>Apply on ATS</span>
+                    <span>&nearr;</span>
+                </a>
+                {% endif %}
+                <button onclick="submitJobDismiss('{{ job.id }}')" class="px-4 py-2.5 text-sm font-medium text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl transition">
+                    Dismiss
+                </button>
+            </div>
+        </div>
+
+        <!-- Human Triage Action Bar & Candidate Application Status -->
+        <div class="pt-5 border-t border-slate-100 flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-slate-50/70 p-4 rounded-xl">
+            <div class="space-y-1">
+                <div class="text-xs text-slate-600 flex items-center gap-3 flex-wrap">
+                    <span>
+                        <span class="font-bold text-slate-800">Human Triage:</span>
+                        <span id="triage-status-label" class="font-semibold text-indigo-700">{{ job.human_review_status }}</span>
+                    </span>
+                    <span>•</span>
+                    <span>
+                        <span class="font-bold text-slate-800">Candidate Tracking:</span>
+                        <span id="candidate-app-status-badge" class="px-2 py-0.5 rounded text-xs font-bold bg-indigo-100 text-indigo-800">{{ job.application_status }}</span>
+                    </span>
+                </div>
+                <p class="text-xs text-slate-500">Human triage records reviewer decisions; candidate tracking logs your application progress independently.</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2 shrink-0">
+                <button onclick="handleDetailReview('{{ job.id }}', 'APPROVE')" class="px-3.5 py-1.5 text-xs font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 rounded-lg transition">
+                    ✓ Approve Review
+                </button>
+                <button onclick="handleDetailReview('{{ job.id }}', 'REJECT')" class="px-3.5 py-1.5 text-xs font-bold text-rose-800 bg-rose-100 hover:bg-rose-200 border border-rose-300 rounded-lg transition">
+                    ✕ Reject Review
+                </button>
+                <select id="update-app-status-select" onchange="submitCandidateApplicationStatus('{{ job.id }}', this.value)" class="py-1.5 px-2.5 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-700 focus:ring-indigo-500 focus:border-indigo-500">
+                    <option value="" disabled selected>Update Application Tracking...</option>
+                    <option value="NOT_APPLIED">Not Applied</option>
+                    <option value="SAVED">Saved</option>
+                    <option value="APPLIED">Applied</option>
+                    <option value="INTERVIEW">Interview</option>
+                    <option value="OFFER">Offer</option>
+                    <option value="REJECTED_BY_COMPANY">Rejected by Co.</option>
+                    <option value="WITHDRAWN">Withdrawn</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- 8-Dimension Verification Grid & Verification Confidence -->
+    <div class="space-y-4">
+        <!-- Verification Overview & Confidence Meter -->
+        <div class="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+                <h2 class="text-base font-bold text-slate-900">8-Dimension Deterministic Verification</h2>
+                <p class="text-xs text-slate-500">Independent deterministic proof dimensions validated during the collection and ingestion pipeline.</p>
+            </div>
+            <div class="flex items-center space-x-3 bg-slate-50 px-4 py-2.5 rounded-xl border border-slate-100 shrink-0">
+                <div class="text-right">
+                    <span class="text-2xl font-black text-indigo-600">{{ "%.0f"|format(job.verification_confidence * 100) }}%</span>
+                    <span class="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Overall Confidence</span>
+                </div>
+                <div class="w-10 h-10 rounded-full border-4 border-indigo-500 flex items-center justify-center text-xs font-bold text-indigo-700 bg-indigo-50">
+                    {{ "%.0f"|format(job.verification_confidence * 100) }}
+                </div>
+            </div>
+        </div>
+
+        <!-- 8-Dimension Grid Cards -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <!-- 1. Source Legitimacy -->
+            <div class="p-3.5 rounded-xl border {% if job.source_verified %}bg-emerald-50/50 border-emerald-200 text-emerald-800{% else %}bg-rose-50/50 border-rose-200 text-rose-800{% endif %}">
+                <div class="text-[11px] font-bold uppercase tracking-wider">1. Source Legitimacy</div>
+                <div class="text-base font-bold mt-1">{% if job.source_verified %}✓ Verified{% else %}✕ Unverified{% endif %}</div>
+                <div class="text-[11px] opacity-75 mt-0.5">Known ATS endpoint</div>
+            </div>
+
+            <!-- 2. JD Existence -->
+            <div class="p-3.5 rounded-xl border {% if job.jd_verified %}bg-emerald-50/50 border-emerald-200 text-emerald-800{% else %}bg-rose-50/50 border-rose-200 text-rose-800{% endif %}">
+                <div class="text-[11px] font-bold uppercase tracking-wider">2. JD Existence</div>
+                <div class="text-base font-bold mt-1">{% if job.jd_verified %}✓ Complete{% else %}✕ Missing{% endif %}</div>
+                <div class="text-[11px] opacity-75 mt-0.5">Full job description</div>
+            </div>
+
+            <!-- 3. Application URL Validity -->
+            <div class="p-3.5 rounded-xl border {% if job.application_url_verified %}bg-emerald-50/50 border-emerald-200 text-emerald-800{% else %}bg-amber-50/50 border-amber-200 text-amber-800{% endif %}">
+                <div class="text-[11px] font-bold uppercase tracking-wider">3. App URL Validity</div>
+                <div class="text-base font-bold mt-1">{% if job.application_url_verified %}✓ Valid URL{% else %}? Unverified{% endif %}</div>
+                <div class="text-[11px] opacity-75 mt-0.5">Safe direct ATS apply link</div>
+            </div>
+
+            <!-- 4. Company Legitimacy -->
+            <div class="p-3.5 rounded-xl border {% if job.company_verified %}bg-emerald-50/50 border-emerald-200 text-emerald-800{% else %}bg-rose-50/50 border-rose-200 text-rose-800{% endif %}">
+                <div class="text-[11px] font-bold uppercase tracking-wider">4. Company Legitimacy</div>
+                <div class="text-base font-bold mt-1">{% if job.company_verified %}✓ Matched{% else %}✕ Unmatched{% endif %}</div>
+                <div class="text-[11px] opacity-75 mt-0.5">Verified company entity</div>
+            </div>
+
+            <!-- 5. Location Consistency -->
+            <div class="p-3.5 rounded-xl border {% if job.location_verified %}bg-emerald-50/50 border-emerald-200 text-emerald-800{% else %}bg-amber-50/50 border-amber-200 text-amber-800{% endif %}">
+                <div class="text-[11px] font-bold uppercase tracking-wider">5. Location Consistency</div>
+                <div class="text-base font-bold mt-1">{% if job.location_verified %}✓ Verified{% else %}? Ambiguous{% endif %}</div>
+                <div class="text-[11px] opacity-75 mt-0.5">Normalizable location</div>
+            </div>
+
+            <!-- 6. Experience Consistency -->
+            <div class="p-3.5 rounded-xl border {% if job.experience_verified %}bg-emerald-50/50 border-emerald-200 text-emerald-800{% else %}bg-amber-50/50 border-amber-200 text-amber-800{% endif %}">
+                <div class="text-[11px] font-bold uppercase tracking-wider">6. Experience Consistency</div>
+                <div class="text-base font-bold mt-1">{% if job.experience_verified %}✓ Parsed{% else %}? Ambiguous{% endif %}</div>
+                <div class="text-[11px] opacity-75 mt-0.5">Deterministic bounds</div>
+            </div>
+
+            <!-- 7. Salary Statedness -->
+            <div class="p-3.5 rounded-xl border {% if job.salary_verified %}bg-emerald-50/50 border-emerald-200 text-emerald-800{% else %}bg-slate-50 border-slate-200 text-slate-700{% endif %}">
+                <div class="text-[11px] font-bold uppercase tracking-wider">7. Salary Statedness</div>
+                <div class="text-base font-bold mt-1">{% if job.salary_verified %}✓ Disclosed{% else %}— Unstated{% endif %}</div>
+                <div class="text-[11px] opacity-75 mt-0.5">Explicit compensation</div>
+            </div>
+
+            <!-- 8. Posting-Date Plausibility -->
+            <div class="p-3.5 rounded-xl border {% if job.posting_date_verified %}bg-emerald-50/50 border-emerald-200 text-emerald-800{% else %}bg-amber-50/50 border-amber-200 text-amber-800{% endif %}">
+                <div class="text-[11px] font-bold uppercase tracking-wider">8. Posting-Date Plausibility</div>
+                <div class="text-base font-bold mt-1">{% if job.posting_date_verified %}✓ Plausible{% else %}? Undated{% endif %}</div>
+                <div class="text-[11px] opacity-75 mt-0.5">Valid chronological date</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Uncertainty / Decision Flags -->
+    {% if job.review_reason or job.rejection_reason %}
+    <div class="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm space-y-2">
+        <h2 class="text-base font-bold text-slate-900">Deterministic Rule Outcome</h2>
+        {% if job.review_reason %}
+        <div class="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-sm">
+            <strong class="font-bold">Review Reason Code:</strong> {{ job.review_reason }}
+            <p class="mt-1 text-xs text-amber-700">The deterministic filter flagged this vacancy for manual review due to ambiguous or boundary conditions.</p>
+        </div>
+        {% endif %}
+        {% if job.rejection_reason %}
+        <div class="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-sm">
+            <strong class="font-bold">Rejection Reason Code:</strong> {{ job.rejection_reason }}
+            <p class="mt-1 text-xs text-rose-700">This role did not meet the criteria configured in the active rule engine.</p>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Responsibilities / Requirements / Skills Pills if parsed -->
+    {% if job.responsibilities or job.requirements or job.skills %}
+    <div class="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm space-y-4">
+        <h2 class="text-base font-bold text-slate-900">Extracted Structured Signals</h2>
+
+        {% if job.skills %}
+        <div class="space-y-1.5">
+            <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Required Skills</h3>
+            <div class="flex flex-wrap gap-1.5">
+                {% for skill in job.skills %}
+                <span class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                    {{ skill }}
+                </span>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if job.responsibilities %}
+        <div class="space-y-1.5 pt-2">
+            <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Key Responsibilities</h3>
+            <ul class="list-disc list-inside text-xs text-slate-700 space-y-1">
+                {% for resp in job.responsibilities %}
+                <li>{{ resp }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        {% if job.requirements %}
+        <div class="space-y-1.5 pt-2">
+            <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Requirements</h3>
+            <ul class="list-disc list-inside text-xs text-slate-700 space-y-1">
+                {% for req in job.requirements %}
+                <li>{{ req }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Full Job Description -->
+    <div class="bg-white p-6 sm:p-8 rounded-2xl border border-slate-200/80 shadow-sm space-y-4">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-4">
+            <h2 class="text-base font-bold text-slate-900">Full Job Description</h2>
+            <span class="text-xs text-slate-400">Captured at ingestion</span>
+        </div>
+        <div class="text-sm leading-relaxed text-slate-700 whitespace-pre-line font-normal space-y-3">
+            {{ job.description }}
+        </div>
+    </div>
+
+    <!-- Multi-ATS Provenance Reference -->
+    <div class="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm space-y-4">
+        <h2 class="text-base font-bold text-slate-900">Multi-ATS Source Provenance</h2>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs text-slate-600">
+                <thead class="bg-slate-50 border-b border-slate-100 uppercase font-semibold text-slate-500">
+                    <tr>
+                        <th class="py-2.5 px-3">Platform</th>
+                        <th class="py-2.5 px-3">External ID</th>
+                        <th class="py-2.5 px-3">Primary</th>
+                        <th class="py-2.5 px-3">Links</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 font-medium">
+                    {% for src in job.sources %}
+                    <tr>
+                        <td class="py-2.5 px-3 capitalize font-bold text-slate-800">{{ src.source_name }}</td>
+                        <td class="py-2.5 px-3 font-mono text-slate-500">{{ src.source_job_id }}</td>
+                        <td class="py-2.5 px-3">
+                            {% if src.is_primary %}
+                            <span class="px-2 py-0.5 rounded text-xs bg-emerald-100 text-emerald-800 font-bold">Primary</span>
+                            {% else %}
+                            <span class="text-slate-400">—</span>
+                            {% endif %}
+                        </td>
+                        <td class="py-2.5 px-3 space-x-2">
+                            {% if src.source_url and src.source_url != '#' %}
+                            <a href="{{ src.source_url|safe_url }}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:underline">Payload &nearr;</a>
+                            {% endif %}
+                            {% if src.application_url and src.application_url != '#' %}
+                            <a href="{{ src.application_url|safe_url }}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:underline">ATS Board &nearr;</a>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="4" class="py-4 text-center text-slate-400">No external source references linked.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Decision Audit Trail Timeline -->
+    <div class="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm space-y-4">
+        <h2 class="text-base font-bold text-slate-900">Filter & Review Decision Audit Trail</h2>
+        <div class="space-y-3">
+            {% for dec in job.filter_decisions %}
+            <div class="p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-1">
+                <div class="flex items-center justify-between text-xs font-bold text-slate-800">
+                    <div class="flex items-center space-x-2">
+                        <span class="px-2 py-0.5 rounded bg-slate-200 text-slate-700">{{ dec.rule_version }}</span>
+                        <span>Outcome: {{ dec.final_status }}</span>
+                    </div>
+                    <span class="text-slate-400 font-normal">{{ dec.evaluated_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</span>
+                </div>
+                <div class="text-xs text-slate-600">
+                    <span class="font-medium">Priority:</span> {{ dec.role_priority }} •
+                    <span class="font-medium">Reason Codes:</span> {{ dec.reason_codes|join(', ') }}
+                </div>
+                {% if dec.evaluation_context %}
+                <div class="text-xs text-slate-500 font-mono bg-white p-2 rounded border border-slate-200 mt-2">
+                    {{ dec.evaluation_context }}
+                </div>
+                {% endif %}
+            </div>
+            {% else %}
+            <p class="text-xs text-slate-400 italic">No historical audit records found.</p>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    async function handleDetailReview(jobId, action) {
+        try {
+            const data = await submitJobReview(jobId, action);
+            if (data && data.human_review_status) {
+                const headerReview = document.getElementById('header-review-status');
+                if (headerReview) headerReview.innerText = data.human_review_status;
+                const triageLabel = document.getElementById('triage-status-label');
+                if (triageLabel) triageLabel.innerText = data.human_review_status;
+            }
+        } catch (err) {
+            console.error('Review submission error:', err);
+        }
+    }
+</script>
+{% endblock %}

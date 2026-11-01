@@ -22,6 +22,7 @@ from app.persistence.models.decision import (
     VerificationRecord,
 )
 from app.persistence.models.job import Job
+from app.persistence.models.notification import NotificationDelivery
 from app.persistence.models.raw_job import JobSourceReference, RawJob
 from app.persistence.models.run import CollectionRun, DiscoveryRun
 from app.persistence.models.source import CompanySource, Source
@@ -37,6 +38,7 @@ __all__ = [
     "RawJob",
     "Job",
     "JobSourceReference",
+    "NotificationDelivery",
     "VerificationRecord",
     "FilterDecision",
     "AIAnalysisResult",

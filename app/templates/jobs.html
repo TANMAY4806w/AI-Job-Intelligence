@@ -1,0 +1,279 @@
+{% extends "base.html" %}
+
+{% block title %}Job Feed — AI-Job-Intelligence{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Top Filter Bar & Search -->
+    <div class="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm space-y-4">
+        <form method="GET" action="/jobs" class="space-y-4">
+            <!-- Search Input -->
+            <div class="flex flex-col sm:flex-row gap-3">
+                <div class="relative flex-1">
+                    <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                    </div>
+                    <input type="text" name="search" value="{{ active_filters.search or '' }}"
+                           placeholder="Search by job title, company, skills, or location..."
+                           class="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-slate-50/50">
+                </div>
+                <button type="submit" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-sm rounded-xl transition shadow-sm">
+                    Search
+                </button>
+                {% if active_filters.search or active_filters.eligibility or active_filters.priority or active_filters.remote_type or active_filters.provider or active_filters.sort_by != 'freshness' %}
+                <a href="/jobs" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-sm rounded-xl transition text-center">
+                    Clear
+                </a>
+                {% endif %}
+            </div>
+
+            <!-- Facet Filters Row -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3 pt-2 text-xs">
+                <!-- Eligibility -->
+                <div>
+                    <label class="block font-semibold text-slate-500 mb-1">Eligibility</label>
+                    <select name="eligibility" onchange="this.form.submit()" class="w-full py-1.5 px-2.5 rounded-lg border border-slate-200 bg-white text-slate-800 font-medium focus:ring-indigo-500 focus:border-indigo-500">
+                        <option value="">All Statuses</option>
+                        <option value="ELIGIBLE" {% if active_filters.eligibility == 'ELIGIBLE' %}selected{% endif %}>Eligible ({{ facets.eligibility_counts.get('ELIGIBLE', 0) }})</option>
+                        <option value="REVIEW" {% if active_filters.eligibility == 'REVIEW' %}selected{% endif %}>Review Needed ({{ facets.eligibility_counts.get('REVIEW', 0) }})</option>
+                        <option value="REJECTED" {% if active_filters.eligibility == 'REJECTED' %}selected{% endif %}>Filtered ({{ facets.eligibility_counts.get('REJECTED', 0) }})</option>
+                    </select>
+                </div>
+
+                <!-- Priority -->
+                <div>
+                    <label class="block font-semibold text-slate-500 mb-1">Priority</label>
+                    <select name="priority" onchange="this.form.submit()" class="w-full py-1.5 px-2.5 rounded-lg border border-slate-200 bg-white text-slate-800 font-medium focus:ring-indigo-500 focus:border-indigo-500">
+                        <option value="">All Priorities</option>
+                        <option value="P1" {% if active_filters.priority == 'P1' %}selected{% endif %}>P1 - Core Match ({{ facets.priority_counts.get('P1', 0) }})</option>
+                        <option value="P2" {% if active_filters.priority == 'P2' %}selected{% endif %}>P2 - Standard Match ({{ facets.priority_counts.get('P2', 0) }})</option>
+                        <option value="P3" {% if active_filters.priority == 'P3' %}selected{% endif %}>P3 - Adjacent ({{ facets.priority_counts.get('P3', 0) }})</option>
+                    </select>
+                </div>
+
+                <!-- Remote Type -->
+                <div>
+                    <label class="block font-semibold text-slate-500 mb-1">Workplace</label>
+                    <select name="remote_type" onchange="this.form.submit()" class="w-full py-1.5 px-2.5 rounded-lg border border-slate-200 bg-white text-slate-800 font-medium focus:ring-indigo-500 focus:border-indigo-500">
+                        <option value="">All Workplaces</option>
+                        <option value="REMOTE" {% if active_filters.remote_type == 'REMOTE' %}selected{% endif %}>Remote ({{ facets.remote_type_counts.get('REMOTE', 0) }})</option>
+                        <option value="HYBRID" {% if active_filters.remote_type == 'HYBRID' %}selected{% endif %}>Hybrid ({{ facets.remote_type_counts.get('HYBRID', 0) }})</option>
+                        <option value="ONSITE" {% if active_filters.remote_type == 'ONSITE' %}selected{% endif %}>Onsite ({{ facets.remote_type_counts.get('ONSITE', 0) }})</option>
+                    </select>
+                </div>
+
+                <!-- ATS Provider -->
+                <div>
+                    <label class="block font-semibold text-slate-500 mb-1">ATS Platform</label>
+                    <select name="provider" onchange="this.form.submit()" class="w-full py-1.5 px-2.5 rounded-lg border border-slate-200 bg-white text-slate-800 font-medium focus:ring-indigo-500 focus:border-indigo-500">
+                        <option value="">All ATS Platforms</option>
+                        <option value="greenhouse" {% if active_filters.provider == 'greenhouse' %}selected{% endif %}>Greenhouse ({{ facets.provider_counts.get('greenhouse', 0) }})</option>
+                        <option value="lever" {% if active_filters.provider == 'lever' %}selected{% endif %}>Lever ({{ facets.provider_counts.get('lever', 0) }})</option>
+                        <option value="ashby" {% if active_filters.provider == 'ashby' %}selected{% endif %}>Ashby ({{ facets.provider_counts.get('ashby', 0) }})</option>
+                    </select>
+                </div>
+
+                <!-- Sort Order -->
+                <div>
+                    <label class="block font-semibold text-slate-500 mb-1">Sort By</label>
+                    <select name="sort_by" onchange="this.form.submit()" class="w-full py-1.5 px-2.5 rounded-lg border border-slate-200 bg-white text-slate-800 font-medium focus:ring-indigo-500 focus:border-indigo-500">
+                        <option value="freshness" {% if active_filters.sort_by == 'freshness' %}selected{% endif %}>Newest / Freshness</option>
+                        <option value="priority" {% if active_filters.sort_by == 'priority' %}selected{% endif %}>Priority (P1 &rarr; P3)</option>
+                        <option value="company" {% if active_filters.sort_by == 'company' %}selected{% endif %}>Company Name (A-Z)</option>
+                    </select>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <!-- Feed Header / Counts -->
+    <div class="flex items-center justify-between text-xs text-slate-500 px-1">
+        <span>Showing <strong class="text-slate-800">{{ jobs|length }}</strong> of <strong class="text-slate-800">{{ total }}</strong> opportunities</span>
+        {% if total_pages > 1 %}
+        <span>Page {{ page }} of {{ total_pages }}</span>
+        {% endif %}
+    </div>
+
+    <!-- Job Cards Listing -->
+    <div class="space-y-4">
+        {% for job in jobs %}
+        <div id="job-card-{{ job.id }}" class="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm hover:border-slate-300 transition flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+            <div class="space-y-2.5 flex-1 min-w-0">
+                <!-- Title & Priority Tags -->
+                <div class="flex flex-wrap items-center gap-2">
+                    <a href="/jobs/{{ job.id }}" class="text-base font-bold text-slate-900 hover:text-indigo-600 transition truncate">
+                        {{ job.title }}
+                    </a>
+
+                    <!-- Priority Badge -->
+                    {% if job.role_priority == 'P1' %}
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-800">
+                        P1 Core
+                    </span>
+                    {% elif job.role_priority == 'P2' %}
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-blue-100 text-blue-800">
+                        P2 Standard
+                    </span>
+                    {% else %}
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-slate-100 text-slate-600">
+                        P3 Adjacent
+                    </span>
+                    {% endif %}
+
+                    <!-- Eligibility Status Badge -->
+                    {% if job.eligibility_status == 'ELIGIBLE' %}
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        Eligible
+                    </span>
+                    {% elif job.eligibility_status == 'REVIEW' %}
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                        Review Needed
+                    </span>
+                    {% elif job.eligibility_status == 'REJECTED' %}
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                        Filtered
+                    </span>
+                    {% endif %}
+
+                    <!-- Human Review Status Badge (if reviewed) -->
+                    {% if job.human_review_status == 'APPROVED' %}
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                        ✓ Approved
+                    </span>
+                    {% elif job.human_review_status == 'REJECTED' %}
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-rose-100 text-rose-800 border border-rose-300">
+                        ✕ Rejected by Reviewer
+                    </span>
+                    {% endif %}
+
+                    <!-- Candidate Application Tracking Badge (if progressed) -->
+                    {% if job.application_status and job.application_status != 'NOT_APPLIED' %}
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        {{ job.application_status }}
+                    </span>
+                    {% endif %}
+
+                    <!-- Remote Type Badge -->
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-700">
+                        {{ job.remote_type|capitalize }}
+                    </span>
+                </div>
+
+                <!-- Metadata Row -->
+                <div class="flex flex-wrap items-center gap-y-1 gap-x-3 text-xs text-slate-500">
+                    <span class="font-semibold text-slate-800">{{ job.company_name }}</span>
+                    <span>•</span>
+                    <span>{{ job.location or 'Location unstated' }}</span>
+
+                    {% if job.salary_min is not none or job.salary_max is not none %}
+                    <span>•</span>
+                    <span class="text-emerald-700 font-semibold">
+                        {% if job.salary_min is not none and job.salary_max is not none %}
+                        {{ job.salary_currency }} {{ "{:,.0f}".format(job.salary_min) }} - {{ "{:,.0f}".format(job.salary_max) }}
+                        {% elif job.salary_min is not none %}
+                        From {{ job.salary_currency }} {{ "{:,.0f}".format(job.salary_min) }}
+                        {% elif job.salary_max is not none %}
+                        Up to {{ job.salary_currency }} {{ "{:,.0f}".format(job.salary_max) }}
+                        {% endif %}
+                    </span>
+                    {% endif %}
+
+                    {% if job.experience_min_years is not none or job.experience_max_years is not none %}
+                    <span>•</span>
+                    <span>
+                        Exp: {% if job.experience_min_years is not none %}{{ job.experience_min_years }}{% else %}0{% endif %} - {% if job.experience_max_years is not none %}{{ job.experience_max_years }} yrs{% else %}+ yrs{% endif %}
+                    </span>
+                    {% endif %}
+
+                    {% if job.primary_source %}
+                    <span>•</span>
+                    <span class="capitalize text-slate-400">via {{ job.primary_source }}</span>
+                    {% endif %}
+
+                    <span>•</span>
+                    <span class="text-slate-400">
+                        Confidence: {{ "%.0f"|format(job.verification_confidence * 100) }}%
+                    </span>
+                </div>
+
+                <!-- Review Uncertainty Context if applicable -->
+                {% if job.review_reason %}
+                <div class="text-xs text-amber-800 bg-amber-50/70 border border-amber-200/60 rounded-lg px-3 py-1.5 inline-block">
+                    <strong>Review flag:</strong> {{ job.review_reason }}
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Card Actions -->
+            <div class="flex items-center space-x-2 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-slate-100">
+                <a href="/jobs/{{ job.id }}" class="px-3.5 py-2 text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-200 rounded-xl hover:bg-slate-100 transition shadow-sm">
+                    View JD
+                </a>
+                {% if job.application_url and job.application_url != '#' %}
+                <a href="{{ job.application_url|safe_url }}" target="_blank" rel="noopener noreferrer" class="px-3.5 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition shadow-sm flex items-center space-x-1">
+                    <span>Apply</span>
+                    <span>&nearr;</span>
+                </a>
+                {% endif %}
+                <button onclick="submitJobDismiss('{{ job.id }}')" title="Dismiss from feed" class="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition border border-transparent hover:border-rose-200">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                </button>
+            </div>
+        </div>
+        {% else %}
+        <!-- Empty State -->
+        <div class="bg-white p-16 rounded-2xl border border-slate-200 text-center space-y-4">
+            <div class="w-12 h-12 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto text-xl">
+                🔍
+            </div>
+            <h3 class="text-base font-bold text-slate-900">No opportunities matched your criteria</h3>
+            <p class="text-xs text-slate-500 max-w-sm mx-auto">Try clearing search filters or broadening your ATS provider and priority tier selections.</p>
+            <div>
+                <a href="/jobs" class="inline-flex px-4 py-2 text-xs font-medium bg-indigo-50 text-indigo-700 rounded-xl hover:bg-indigo-100 transition">
+                    Clear all filters
+                </a>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Pagination Controls -->
+    {% if total_pages > 1 %}
+    <div class="flex items-center justify-between bg-white px-6 py-4 rounded-2xl border border-slate-200/80 shadow-sm text-xs font-medium">
+        <div>
+            {% if page > 1 %}
+            <a href="?page={{ page - 1 }}&search={{ active_filters.search or '' }}&eligibility={{ active_filters.eligibility or '' }}&priority={{ active_filters.priority or '' }}&remote_type={{ active_filters.remote_type or '' }}&provider={{ active_filters.provider or '' }}&sort_by={{ active_filters.sort_by or 'freshness' }}"
+               class="px-3.5 py-2 border border-slate-200 rounded-xl text-slate-700 hover:bg-slate-50 transition">
+                &larr; Previous
+            </a>
+            {% else %}
+            <span class="px-3.5 py-2 border border-slate-100 rounded-xl text-slate-300 cursor-not-allowed">
+                &larr; Previous
+            </span>
+            {% endif %}
+        </div>
+
+        <span class="text-slate-500">
+            Page <strong class="text-slate-800">{{ page }}</strong> of <strong class="text-slate-800">{{ total_pages }}</strong>
+        </span>
+
+        <div>
+            {% if page < total_pages %}
+            <a href="?page={{ page + 1 }}&search={{ active_filters.search or '' }}&eligibility={{ active_filters.eligibility or '' }}&priority={{ active_filters.priority or '' }}&remote_type={{ active_filters.remote_type or '' }}&provider={{ active_filters.provider or '' }}&sort_by={{ active_filters.sort_by or 'freshness' }}"
+               class="px-3.5 py-2 border border-slate-200 rounded-xl text-slate-700 hover:bg-slate-50 transition">
+                Next &rarr;
+            </a>
+            {% else %}
+            <span class="px-3.5 py-2 border border-slate-100 rounded-xl text-slate-300 cursor-not-allowed">
+                Next &rarr;
+            </span>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

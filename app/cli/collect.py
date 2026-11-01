@@ -656,6 +656,33 @@ async def execute_bulk_collection(
                 )
             )
 
+    # 4.6. Post-commit automatic notification dispatch (if enabled)
+    # Executed strictly AFTER all ingestion transactions have committed to PostgreSQL.
+    # Failures during notification dispatch NEVER interrupt or invalidate committed collection data.
+    try:
+        from app.config.settings import get_settings
+        from app.notifications.email_service import EmailNotificationService
+
+        settings = get_settings()
+        if settings.EMAIL_NOTIFICATIONS_ENABLED and settings.NOTIFICATION_RECIPIENT_EMAIL:
+            logger.info("Triggering post-collection automatic notification dispatch...")
+            async with session_scope() as notify_session:
+                notify_service = EmailNotificationService(notify_session)
+                dispatch_res = await notify_service.process_batch(
+                    recipient_email=settings.NOTIFICATION_RECIPIENT_EMAIL,
+                    dry_run=False,
+                )
+                logger.info(
+                    "Post-collection notifications completed: %d sent, %d failed",
+                    dispatch_res.total_sent,
+                    dispatch_res.total_failed,
+                )
+    except Exception as notify_err:
+        logger.warning(
+            "Post-collection notification dispatch failed (collection data remains committed): %s",
+            notify_err,
+        )
+
     t1 = time.perf_counter()
     elapsed = t1 - t0
 

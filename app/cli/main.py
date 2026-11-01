@@ -333,6 +333,47 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional file path to write collection output report",
     )
 
+    # =========================================================================
+    # Email Notifications Subcommand
+    # =========================================================================
+    notify_parser = subparsers.add_parser(
+        "notify",
+        help="Preview or dispatch email notifications for eligible newly discovered vacancies",
+        description="Outbound email notification engine for P1/P2 qualifying job opportunities.",
+    )
+    notify_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Preview eligible pending notifications without sending network emails (default: True unless --send is passed)",
+    )
+    notify_parser.add_argument(
+        "--send",
+        action="store_true",
+        default=False,
+        help="Dispatch pending email notifications via configured SMTP host",
+    )
+    notify_parser.add_argument(
+        "-r",
+        "--recipient",
+        type=str,
+        default=None,
+        help="Override notification recipient email (defaults to NOTIFICATION_RECIPIENT_EMAIL)",
+    )
+    notify_parser.add_argument(
+        "-l",
+        "--limit",
+        type=int,
+        default=20,
+        help="Maximum number of notifications to evaluate and process (default: 20)",
+    )
+    notify_parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output notification summary in JSON format",
+    )
+
     return parser
 
 
@@ -592,6 +633,10 @@ async def async_main(args: argparse.Namespace) -> int:
             return await _handle_reevaluate(args)
         elif args.subcommand == "refresh":
             return await _handle_refresh(args)
+        elif args.subcommand == "notify":
+            from app.cli.notify import run_notify
+
+            return await run_notify(args)
         else:
             print(
                 "ERROR: Unrecognized subcommand. Use --help to view available commands.",

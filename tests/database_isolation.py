@@ -11,6 +11,7 @@ PROTECTED_DATABASE_NAMES: Final[frozenset[str]] = frozenset(
 )
 
 APPLICATION_TABLES_ORDERED_FOR_TRUNCATE: Final[tuple[str, ...]] = (
+    "notification_deliveries",
     "job_source_references",
     "verification_records",
     "filter_decisions",

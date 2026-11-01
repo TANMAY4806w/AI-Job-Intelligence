@@ -35,13 +35,14 @@ EXPECTED_TABLE_NAMES = {
     "ai_analysis_results",
     "discovery_runs",
     "collection_runs",
+    "notification_deliveries",
 }
 
 
-def test_metadata_contains_all_11_tables() -> None:
-    """Verify that metadata exports all 11 approved schema tables."""
+def test_metadata_contains_all_12_tables() -> None:
+    """Verify that metadata exports all 12 approved schema tables."""
     assert set(metadata.tables.keys()) == EXPECTED_TABLE_NAMES
-    assert len(metadata.tables) == 11
+    assert len(metadata.tables) == 12
 
 
 def test_mapper_configuration_succeeds() -> None:

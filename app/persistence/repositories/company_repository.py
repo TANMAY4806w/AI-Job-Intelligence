@@ -3,9 +3,13 @@
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
+from sqlalchemy.orm import selectinload
 
 from app.persistence.models.company import Company
+from app.persistence.models.decision import FilterDecision
+from app.persistence.models.job import Job
+from app.persistence.models.source import CompanySource
 from app.persistence.repositories.base import BaseRepository
 
 
@@ -47,3 +51,47 @@ class CompanyRepository(BaseRepository):
         )
         result = await self.session.execute(stmt)
         return result.scalars().all()
+
+    async def list_all_with_stats(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Sequence[tuple[Company, int]]:
+        """List companies with active job counts and eagerly loaded ATS sources."""
+        latest_human_decision = (
+            select(FilterDecision.final_status)
+            .where(
+                FilterDecision.job_id == Job.id,
+                FilterDecision.rule_version == "HUMAN_REVIEW_V1",
+            )
+            .order_by(FilterDecision.evaluated_at.desc(), FilterDecision.id.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+
+        active_subq = (
+            select(Job.company_id, func.count(Job.id).label("active_jobs_count"))
+            .where(
+                or_(
+                    latest_human_decision.is_(None),
+                    latest_human_decision != "DISMISSED",
+                )
+            )
+            .group_by(Job.company_id)
+            .subquery()
+        )
+
+        stmt = (
+            select(
+                Company,
+                func.coalesce(active_subq.c.active_jobs_count, 0).label("active_jobs_count"),
+            )
+            .outerjoin(active_subq, Company.id == active_subq.c.company_id)
+            .options(selectinload(Company.company_sources).selectinload(CompanySource.source))
+            .order_by(Company.name)
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self.session.execute(stmt)
+        return result.all()

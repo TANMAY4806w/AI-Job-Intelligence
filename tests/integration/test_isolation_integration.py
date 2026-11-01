@@ -95,8 +95,8 @@ async def test_committed_integration_records_do_not_leak_to_development_db() -> 
 
 
 @pytest.mark.asyncio
-async def test_clean_test_database_clears_all_eleven_application_tables() -> None:
-    """Verify that clean_test_database wipes all 11 application tables and preserves alembic_version."""
+async def test_clean_test_database_clears_all_twelve_application_tables() -> None:
+    """Verify that clean_test_database wipes all 12 application tables and preserves alembic_version."""
     from tests.database_isolation import (
         APPLICATION_TABLES_ORDERED_FOR_TRUNCATE,
         clean_test_database,
@@ -108,7 +108,7 @@ async def test_clean_test_database_clears_all_eleven_application_tables() -> Non
     # 1. Execute safe cleanup
     await clean_test_database(test_db_url)
 
-    # 2. Check each of the 11 application tables has 0 rows
+    # 2. Check each of the 12 application tables has 0 rows
     async with session_factory() as session:
         for table_name in APPLICATION_TABLES_ORDERED_FOR_TRUNCATE:
             res = await session.execute(text(f"SELECT COUNT(*) FROM {table_name};"))
@@ -120,4 +120,4 @@ async def test_clean_test_database_clears_all_eleven_application_tables() -> Non
         # 3. Check alembic_version has not been wiped
         v_res = await session.execute(text("SELECT version_num FROM alembic_version;"))
         version = v_res.scalar()
-        assert version == "05377f2ddb14", f"Alembic version corrupted or missing: {version}"
+        assert version == "20a5ee5a034d", f"Alembic version corrupted or missing: {version}"

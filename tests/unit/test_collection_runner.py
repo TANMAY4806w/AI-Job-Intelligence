@@ -78,10 +78,10 @@ class TestCollectorRegistry:
     def test_unsupported_source_lookup(self) -> None:
         """Verify unregistered source platforms return None and is_supported is False."""
         registry = CollectorRegistry()
-        assert not registry.is_supported("LEVER")
-        assert not registry.is_supported("ASHBY")
+        assert not registry.is_supported("WORKDAY")
         assert not registry.is_supported("WORKABLE")
-        assert registry.get("LEVER") is None
+        assert not registry.is_supported("TALENTLMS")
+        assert registry.get("WORKDAY") is None
         assert registry.get("UNKNOWN_SOURCE") is None
 
     def test_register_and_unregister_custom_collector(self) -> None:
@@ -627,13 +627,13 @@ class TestCollectionRunnerExecution:
 
         # Mapping 5: Unsupported source platform -> UNSUPPORTED_SOURCE
         source_unsupported = Source(
-            id=uuid.uuid4(), source_name="LEVER", source_type="ATS_API", is_active=True
+            id=uuid.uuid4(), source_name="WORKDAY", source_type="ATS_API", is_active=True
         )
         cs5 = CompanySource(
             id=uuid.uuid4(),
             company_id=company.id,
             source_id=source_unsupported.id,
-            ats_identifier="lever-board",
+            ats_identifier="workday-board",
             is_active=True,
         )
         cs5.company = company

@@ -34,7 +34,7 @@ class UnsupportedSourceError(CollectorRegistryError, ValueError):
         self.source_identifier = source_identifier
         super().__init__(
             f"Unsupported or unregistered source platform: '{source_identifier}'. "
-            "Supported sources in V1: GREENHOUSE."
+            "Supported sources: GREENHOUSE, LEVER, ASHBY."
         )
 
 
@@ -44,10 +44,14 @@ class CollectorRegistry:
     def __init__(self) -> None:
         """Initialize registry with standard V1 supported collectors."""
         self._registry: dict[str, type[BaseCollector]] = {}
-        # Pre-register supported V1 collectors
+        # Pre-register supported collectors
+        from app.collectors.ashby.collector import AshbyCollector
         from app.collectors.greenhouse.collector import GreenhouseCollector
+        from app.collectors.lever.collector import LeverCollector
 
         self.register("GREENHOUSE", GreenhouseCollector)
+        self.register("LEVER", LeverCollector)
+        self.register("ASHBY", AshbyCollector)
 
     @staticmethod
     def _normalize_key(source_identifier: str) -> str:

@@ -252,6 +252,87 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional file path to write JSON report",
     )
 
+    # =========================================================================
+    # Bulk Collection Subcommand
+    # =========================================================================
+    bulk_parser = subparsers.add_parser(
+        "collect",
+        help="Execute bulk job collection across registered ATS company endpoints",
+        description="Harvest and ingest job vacancies for companies configured in the registry.",
+    )
+    bulk_parser.add_argument(
+        "-p",
+        "--provider",
+        type=str,
+        default=None,
+        choices=["greenhouse", "lever", "ashby", "GREENHOUSE", "LEVER", "ASHBY"],
+        help="Optional ATS platform filter (e.g. 'greenhouse', 'lever', 'ashby')",
+    )
+    bulk_parser.add_argument(
+        "-c",
+        "--company",
+        action="append",
+        dest="companies",
+        help="Target company name or slug (can be specified multiple times)",
+    )
+    bulk_parser.add_argument(
+        "--all",
+        action="store_true",
+        default=False,
+        dest="include_inactive",
+        help="Include inactive company registry entries (defaults to active only)",
+    )
+    bulk_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Preview targeted company endpoints without executing network or database writes (Plan-only mode)",
+    )
+    bulk_parser.add_argument(
+        "--preview-live",
+        action="store_true",
+        default=False,
+        help="Execute live read-only public ATS requests to preview discovered job counts without database writes",
+    )
+    bulk_parser.add_argument(
+        "--apply",
+        dest="apply",
+        action="store_true",
+        default=False,
+        help="Execute mutating bulk collection and persistence (defaults to dry-run preview if omitted)",
+    )
+    bulk_parser.add_argument(
+        "--target-database",
+        type=str,
+        default=None,
+        help="Expected target database name (required when executing with --apply)",
+    )
+    bulk_parser.add_argument(
+        "--allow-database-override",
+        type=str,
+        default=None,
+        help="Database override (strictly forbidden for bulk collection; unconditionally rejected if supplied)",
+    )
+    bulk_parser.add_argument(
+        "--registry-file",
+        type=str,
+        default=None,
+        help="Custom path to companies registry JSON file (defaults to data/companies.json)",
+    )
+    bulk_parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output complete collection report in JSON format",
+    )
+    bulk_parser.add_argument(
+        "-o",
+        "--output-file",
+        type=str,
+        default=None,
+        help="Optional file path to write collection output report",
+    )
+
     return parser
 
 
@@ -470,10 +551,31 @@ async def _handle_refresh(args: argparse.Namespace) -> int:
         return exit_code
 
 
+async def _handle_bulk_collect(args: argparse.Namespace) -> int:
+    """Handle generic 'collect' bulk collection command."""
+    from app.cli.collect import execute_bulk_collection
+
+    return await execute_bulk_collection(
+        registry_file=args.registry_file,
+        provider=args.provider,
+        companies=args.companies,
+        include_inactive=args.include_inactive,
+        dry_run=args.dry_run,
+        preview_live=args.preview_live,
+        apply=args.apply,
+        target_database=args.target_database,
+        allow_database_override=args.allow_database_override,
+        as_json=args.json,
+        output_file=args.output_file,
+    )
+
+
 async def async_main(args: argparse.Namespace) -> int:
     """Dispatch CLI arguments asynchronously to appropriate handler."""
     try:
-        if args.subcommand == "greenhouse":
+        if args.subcommand == "collect":
+            return await _handle_bulk_collect(args)
+        elif args.subcommand == "greenhouse":
             if args.action == "collect":
                 return await _handle_greenhouse_collect(args)
             elif args.action == "onboard":

@@ -4,6 +4,10 @@ Interfaces with external platforms and ATS endpoints to capture raw external job
 Boundary: Collectors must NEVER filter openings by title, experience, or salary.
 """
 
+from app.collectors.ashby.collector import (
+    ASHBY_API_BASE,
+    AshbyCollector,
+)
 from app.collectors.base.collector import (
     STATUS_EMPTY,
     STATUS_FAILED,
@@ -20,6 +24,10 @@ from app.collectors.greenhouse.collector import (
     GreenhouseCollector,
     validate_board_token,
 )
+from app.collectors.lever.collector import (
+    LEVER_API_BASE,
+    LeverCollector,
+)
 from app.collectors.registry import (
     CollectorRegistry,
     CollectorRegistryError,
@@ -28,7 +36,11 @@ from app.collectors.registry import (
 )
 
 __all__ = [
+    "ASHBY_API_BASE",
+    "AshbyCollector",
     "GREENHOUSE_API_BASE",
+    "LEVER_API_BASE",
+    "LeverCollector",
     "STATUS_EMPTY",
     "STATUS_FAILED",
     "STATUS_PARTIAL_SUCCESS",

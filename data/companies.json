@@ -1,0 +1,227 @@
+[
+  {
+    "name": "Figma",
+    "slug": "figma",
+    "ats_provider": "GREENHOUSE",
+    "board_identifier": "figma",
+    "career_url": "https://www.figma.com/careers/",
+    "is_active": true,
+    "notes": "Collaborative interface design and developer tooling platform."
+  },
+  {
+    "name": "Stripe",
+    "slug": "stripe",
+    "ats_provider": "GREENHOUSE",
+    "board_identifier": "stripe",
+    "career_url": "https://stripe.com/jobs",
+    "is_active": true,
+    "notes": "Global payment infrastructure, fintech, and developer billing APIs."
+  },
+  {
+    "name": "Anthropic",
+    "slug": "anthropic",
+    "ats_provider": "GREENHOUSE",
+    "board_identifier": "anthropic",
+    "career_url": "https://www.anthropic.com/careers",
+    "is_active": true,
+    "notes": "AI safety and foundational research company building Claude LLMs."
+  },
+  {
+    "name": "GitLab",
+    "slug": "gitlab",
+    "ats_provider": "GREENHOUSE",
+    "board_identifier": "gitlab",
+    "career_url": "https://about.gitlab.com/jobs/",
+    "is_active": true,
+    "notes": "All-remote complete DevSecOps platform and CI/CD tools."
+  },
+  {
+    "name": "Datadog",
+    "slug": "datadog",
+    "ats_provider": "GREENHOUSE",
+    "board_identifier": "datadog",
+    "career_url": "https://careers.datadoghq.com/",
+    "is_active": true,
+    "notes": "Cloud observability, APM, log management, and security telemetry."
+  },
+  {
+    "name": "Cloudflare",
+    "slug": "cloudflare",
+    "ats_provider": "GREENHOUSE",
+    "board_identifier": "cloudflare",
+    "career_url": "https://www.cloudflare.com/careers/",
+    "is_active": true,
+    "notes": "Edge computing, global CDN, DNS, and cloud network security."
+  },
+  {
+    "name": "Scale AI",
+    "slug": "scaleai",
+    "ats_provider": "GREENHOUSE",
+    "board_identifier": "scaleai",
+    "career_url": "https://scale.com/careers",
+    "is_active": true,
+    "notes": "Data-centric AI platform and foundation model fine-tuning infrastructure."
+  },
+  {
+    "name": "Cockroach Labs",
+    "slug": "cockroachlabs",
+    "ats_provider": "GREENHOUSE",
+    "board_identifier": "cockroachlabs",
+    "career_url": "https://www.cockroachlabs.com/careers/",
+    "is_active": true,
+    "notes": "Distributed resilient SQL database engine for modern cloud architecture."
+  },
+  {
+    "name": "Palantir",
+    "slug": "palantir",
+    "ats_provider": "LEVER",
+    "board_identifier": "palantir",
+    "career_url": "https://www.palantir.com/careers/",
+    "is_active": true,
+    "notes": "Enterprise data analytics, AI operational ontology, and defense platforms."
+  },
+  {
+    "name": "Spotify",
+    "slug": "spotify",
+    "ats_provider": "LEVER",
+    "board_identifier": "spotify",
+    "career_url": "https://www.lifeatspotify.com/jobs",
+    "is_active": true,
+    "notes": "Global digital audio streaming, recommendation engines, and podcasting platform."
+  },
+  {
+    "name": "Zoox",
+    "slug": "zoox",
+    "ats_provider": "LEVER",
+    "board_identifier": "zoox",
+    "career_url": "https://zoox.com/careers/",
+    "is_active": true,
+    "notes": "Autonomous vehicle robotics, computer vision, and fleet systems."
+  },
+  {
+    "name": "Outreach",
+    "slug": "outreach",
+    "ats_provider": "LEVER",
+    "board_identifier": "outreach",
+    "career_url": "https://www.outreach.io/careers",
+    "is_active": true,
+    "notes": "AI-powered sales execution and revenue workflow management platform."
+  },
+  {
+    "name": "Coupa",
+    "slug": "coupa",
+    "ats_provider": "LEVER",
+    "board_identifier": "coupa",
+    "career_url": "https://www.coupa.com/careers/",
+    "is_active": true,
+    "notes": "Business spend management, supply chain analytics, and cloud procurement."
+  },
+  {
+    "name": "Cloudinary",
+    "slug": "cloudinary",
+    "ats_provider": "LEVER",
+    "board_identifier": "cloudinary",
+    "career_url": "https://cloudinary.com/careers",
+    "is_active": true,
+    "notes": "End-to-end cloud image and video management and AI media optimization APIs."
+  },
+  {
+    "name": "Kinsta",
+    "slug": "kinsta",
+    "ats_provider": "LEVER",
+    "board_identifier": "kinsta",
+    "career_url": "https://kinsta.com/careers/",
+    "is_active": true,
+    "notes": "Premium managed cloud hosting and developer infrastructure platform."
+  },
+  {
+    "name": "OpenAI",
+    "slug": "openai",
+    "ats_provider": "ASHBY",
+    "board_identifier": "openai",
+    "career_url": "https://openai.com/careers",
+    "is_active": true,
+    "notes": "AI research and deployment company developing GPT models and ChatGPT."
+  },
+  {
+    "name": "Perplexity",
+    "slug": "perplexity",
+    "ats_provider": "ASHBY",
+    "board_identifier": "perplexity",
+    "career_url": "https://www.perplexity.ai/careers",
+    "is_active": true,
+    "notes": "AI-native conversational search engine and factual answer synthesis."
+  },
+  {
+    "name": "Cursor",
+    "slug": "cursor",
+    "ats_provider": "ASHBY",
+    "board_identifier": "cursor",
+    "career_url": "https://www.cursor.com/careers",
+    "is_active": true,
+    "notes": "Anysphere AI-powered code editor and developer productivity assistant."
+  },
+  {
+    "name": "Ramp",
+    "slug": "ramp",
+    "ats_provider": "ASHBY",
+    "board_identifier": "ramp",
+    "career_url": "https://ramp.com/careers",
+    "is_active": true,
+    "notes": "Corporate card, spend automation, and finance intelligence platform."
+  },
+  {
+    "name": "Notion",
+    "slug": "notion",
+    "ats_provider": "ASHBY",
+    "board_identifier": "notion",
+    "career_url": "https://www.notion.so/careers",
+    "is_active": true,
+    "notes": "Connected workspace for docs, wikis, project management, and AI notes."
+  },
+  {
+    "name": "Linear",
+    "slug": "linear",
+    "ats_provider": "ASHBY",
+    "board_identifier": "linear",
+    "career_url": "https://linear.app/careers",
+    "is_active": true,
+    "notes": "Issue tracking, modern product management, and sprint planning system."
+  },
+  {
+    "name": "Replit",
+    "slug": "replit",
+    "ats_provider": "ASHBY",
+    "board_identifier": "replit",
+    "career_url": "https://replit.com/careers",
+    "is_active": true,
+    "notes": "Collaborative cloud browser-based IDE and autonomous software development agent."
+  },
+  {
+    "name": "Synthesia",
+    "slug": "synthesia",
+    "ats_provider": "ASHBY",
+    "board_identifier": "synthesia",
+    "career_url": "https://www.synthesia.io/careers",
+    "is_active": true,
+    "notes": "Generative AI video creation and synthetic media presentation platform."
+  },
+  {
+    "name": "Pinecone",
+    "slug": "pinecone",
+    "ats_provider": "ASHBY",
+    "board_identifier": "pinecone",
+    "career_url": "https://www.pinecone.io/careers/",
+    "is_active": true,
+    "notes": "Managed cloud vector database built for GenAI, LLM memory, and semantic search."
+  },
+  {
+    "name": "Vercel",
+    "slug": "vercel",
+    "ats_provider": "ASHBY",
+    "board_identifier": "vercel",
+    "career_url": "https://vercel.com/careers",
+    "is_active": true,
+    "notes": "Frontend deployment cloud, Next.js framework maintainer, and serverless AI SDK."
+  }
+]
